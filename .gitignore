@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+/target
+build
+configure
+.idea
+duckdb_unittest_tempdir
+/test/bin
+venv
+# local secrets
+.env

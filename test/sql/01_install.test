@@ -1,0 +1,42 @@
+# name: test/sql/01_install.test
+# description: extension registers its scalars and installs the macro layer
+# group: [profiler]
+
+statement error
+SELECT ts_ask('x', '{}');
+----
+Catalog Error
+
+require profiler
+
+# The macro layer installs into the catalog at load time.
+query I
+SELECT (json_extract(profiler_status(), '$.macros_installed'))::BOOLEAN;
+----
+true
+
+query I
+SELECT json_extract_string(profiler_settings(), '$.model');
+----
+jev-latest
+
+statement ok
+SELECT profiler_config('model', 'jev-latest');
+
+# Unknown settings are rejected rather than silently ignored.
+statement error
+SELECT profiler_config('modle', 'typo');
+----
+unknown profiler setting
+
+query I
+SELECT json_extract(profiler_reset_stats(), '$.requests');
+----
+0
+
+# The macro layer is retrievable as text, for installing by hand on a
+# read-only database where the catalog cannot be written.
+query I
+SELECT profiler_sql() LIKE '%CREATE OR REPLACE MACRO profile_report%';
+----
+true

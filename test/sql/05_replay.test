@@ -1,0 +1,110 @@
+# name: test/sql/05_replay.test
+# description: full pipeline replayed offline against the frozen demo responses
+# group: [profiler]
+#
+# No API key and no network. Every judgment below came from a real jev-1.13.0 run
+# against demo/messy.sql and was frozen into test/fixtures/shipments_cache.jsonl.
+# Offline mode makes a cache miss a hard error, so this cannot silently pass on
+# fabricated answers.
+
+require profiler
+
+statement ok
+SELECT profiler_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
+
+statement ok
+SELECT profiler_config('offline', 'true');
+
+statement ok
+SELECT profiler_reset_stats();
+
+statement ok
+CREATE TABLE shipments AS SELECT * FROM (VALUES
+ (1,'ORD-1001','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Steel Bracket','Hardware','12 kg',2,'delivered','2024-03-01','2024-03-02','standard handling'),
+ (2,'ORD-1002','Nordwind GmbH','kontakt@nordwind.de','Hafenstrasse 14','Hamburg','HH','20457','DE','Copper Fitting','Hardware','26.4',1,'delivered','2024-03-01','2024-03-03','customer collected'),
+ (3,'ORD-1003','Test Company','test@test.com','123 Main St','Test City','CA','00000','US','Test Product','Test','1 kg',1,'delivered','2024-03-02','2024-03-02','asdf'),
+ (4,'ORD-1004','Harborline Ltd','post@harborline.co.uk','7 Dock Road','Bristol','ENG','BS1 6QH','GB','Steel Bracket','Hardware','9 kg',4,'delivered','2024-03-02','2024-03-04','none'),
+ (5,'ORD-1005','Pacific Freight','hello@pacfreight.com','88 Quay Street','Auckland','AUK','SW1A 1AA','US','Rubber Seal','Hardware','3 kg',10,'delivered','2024-03-03','2024-03-05','none'),
+ (6,'ORD-1006','Greenfield Co','sales@greenfield.com','22 Elm Avenue','Portland','OR','97205','US','Blue Cotton T-Shirt','Garden Tools','1 kg',6,'delivered','2024-03-03','2024-03-06','none'),
+ (7,'ORD-1007','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Steel Bracket','Hardware','12 kg',3,'shipped','2024-03-04','','awaiting carrier scan'),
+ (8,'ORD-1008','Delta Supplies','orders@delta.com; billing@delta.com','410 Pine Street','Seattle','WA','98101','US','Hex Nut','Hardware','0.5 kg',200,'delivered','2024-03-04','2024-03-06','none'),
+ (9,'ORD-1009','Rivera Logistics','contact@rivera.mx','Av. Reforma 500','Mexico City','CMX','06600','MX','Copper Fitting','Hardware','5 kg',8,'delivered','2024-03-05','2024-03-08','consignee SSN 078-05-1120 on file for customs'),
+ (10,'ORD-1010','Northgate Ltd','info@northgate.co.uk','15 Mill Lane','Leeds','ENG','LS1 4DY','GB','Rubber Seal','Hardware','2 kg',12,'delivered','2024-03-05','2024-03-07','none'),
+ (11,'ORD-1011','Summit Tools','buy@summittools.com','900 Ridge Road','Denver','CO','80202','US','Steel Bracket','Hardware','35.2',5,'delivered','2024-03-06','2024-03-08','none'),
+ (12,'ORD-1012','Bluewater Marine','sales@bluewater.com','3 Ocean Drive','Miami','FL','EC1A 1BB','US','Rubber Seal','Hardware','3 kg',7,'delivered','2024-03-06','2024-03-09','none'),
+ (13,'ORD-1013','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Hex Nut','Hardware','0.5 kg',150,'delivered','2024-03-07','2024-03-09','none'),
+ (14,'ORD-1014','Cedar Works','hello@cedarworks.com','DO NOT SHIP - see ticket 4412','Austin','TX','78701','US','Steel Bracket','Hardware','12 kg',2,'cancelled','2024-03-07','','account on hold'),
+ (15,'ORD-1015','Harborline Ltd','post@harborline.co.uk','7 Dock Road','Bristol','ENG','BS1 6QH','GB','Copper Fitting','Hardware','5 kg',3,'shipped','2024-03-08','','none'),
+ (16,'ORD-1016','Vista Components','orders@vista.com','55 Canyon Way','Phoenix','AZ','85004','US','Hex Nut','Hardware','0.5 kg',300,'delivered','2024-03-08','2024-03-10','none'),
+ (17,'ORD-1017','Asdf Asdf','foo@bar.com','999 Fake Street','Springfield','ZZ','11111','US','Sample Item','Hardware','1 kg',1,'delivered','2024-03-09','2024-03-09','lorem ipsum dolor'),
+ (18,'ORD-1018','Nordwind GmbH','kontakt@nordwind.de','Hafenstrasse 14','Hamburg','HH','20457','DE','Rubber Seal','Hardware','3 kg',9,'delivered','2024-03-09','2024-03-11','none'),
+ (19,'ORD-1019','Lakeside Traders','ops@lakeside.com','12 Shore Road','Chicago','IL','60601','US','Steel Bracket','Hardware','12 kg',4,'delivered','2024-03-10','9999-12-31','delivery date not recorded'),
+ (20,'ORD-1020','CafÃ© Lumière SARL','bonjour@cafelumiere.fr','8 Rue de la Paix','Paris','IDF','75002','FR','Copper Fitting','Hardware','5 kg',6,'delivered','2024-03-10','2024-03-12','livraison Ã  l''entrepÃ´t')
+) AS t(id, order_ref, customer, email, address, city, region, postal_code, country,
+       product_name, category, weight, qty, status, ordered_at, shipped_at, notes);
+
+# Discovery reads the values, not the names: a VARCHAR column of "12 kg" and
+# "26.4" is a physical measurement whose unit is mixed.
+query II
+SELECT semantic_type, unit_or_currency FROM profile_columns('shipments') WHERE column_name = 'weight';
+----
+physical_measurement	mixed
+
+# PII is found in free text, in a column named nothing like it.
+query I
+SELECT sensitive_personal_data > 0.9 FROM profile_columns('shipments') WHERE column_name = 'notes';
+----
+true
+
+# The adaptive step picks the check that matches the planted defect.
+query I
+SELECT selected FROM profile_probes('shipments')
+WHERE column_name = 'address' AND probe_id = 'operational_note_in_data_field';
+----
+true
+
+# A probe whose premise is the semantic type is skipped when discovery was unsure.
+# product_name was classified sku_or_product_code at ~0.51 confidence.
+query I
+SELECT count(*) FROM profile_probes('shipments')
+WHERE column_name = 'product_name' AND probe_id = 'type_mismatch';
+----
+0
+
+# Cross-column contradictions, which no column-at-a-time profiler can reach.
+query I
+SELECT count(DISTINCT json_extract(row_json,'$.id')::INT)
+FROM profile_findings('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
+----
+2
+
+# Rows 7 and 15 are shipped with no ship date; row 19 is delivered with a
+# 9999-12-31 sentinel standing in for the real one. All three are real.
+query I
+SELECT count(DISTINCT json_extract(row_json,'$.id')::INT)
+FROM profile_findings('shipments', rows:=20) WHERE probe_id = 'status_timeline_inconsistent';
+----
+3
+
+# Calibration: bare numbers separate cleanly from values that state their unit,
+# but land in the needs_review band rather than being asserted as defects.
+query II
+SELECT round(max(probability) FILTER (value NOT LIKE '%kg%'), 2),
+       round(max(probability) FILTER (value LIKE '%kg%'), 2)
+FROM profile_values('shipments', rows:=20)
+WHERE column_name = 'weight' AND probe_id = 'unit_ambiguous';
+----
+0.57	0.02
+
+# Re-slicing a report is free: changing the threshold re-reads cached judgments.
+query I
+SELECT (SELECT count(*) FROM profile_report('shipments', threshold:=0.9, rows:=20))
+     < (SELECT count(*) FROM profile_report('shipments', threshold:=0.5, rows:=20));
+----
+true
+
+# The whole replay ran without a single request.
+query I
+SELECT json_extract(profiler_stats(), '$.requests');
+----
+0

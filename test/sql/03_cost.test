@@ -1,0 +1,35 @@
+# name: test/sql/03_cost.test
+# description: the dry run makes no API calls and reports honest request counts
+# group: [profiler]
+
+require profiler
+
+statement ok
+CREATE TABLE t AS SELECT i AS id, 'name' || i AS nm, i * 1.5 AS amt FROM range(50) r(i);
+
+statement ok
+SELECT profiler_reset_stats();
+
+# 3 columns -> 3 discovery + 4 selection + 10 execution requests.
+query IIIII
+SELECT n_columns, rows_to_probe, discovery_requests, selection_requests, execution_requests
+FROM profile_cost('t', rows:=10);
+----
+3	10	3	4	10
+
+query I
+SELECT total_requests FROM profile_cost('t', rows:=10);
+----
+17
+
+# rows_to_probe is capped by the real table size, not by the argument.
+query I
+SELECT rows_to_probe FROM profile_cost('t', rows:=10000);
+----
+50
+
+# The whole dry run must not have touched the network.
+query I
+SELECT json_extract(profiler_stats(), '$.requests');
+----
+0
