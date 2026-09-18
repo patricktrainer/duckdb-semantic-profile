@@ -28,18 +28,23 @@ CREATE OR REPLACE MACRO profile_values(
     min_type_confidence := 0.6
 ) AS TABLE
     WITH plan AS (SELECT * FROM profile_plan(tbl, n, min_relevance, max_per_column, max_row_probes, min_type_confidence)),
+    -- Ask a value probe only where that row actually has a value. A SQL NULL is
+    -- absence expressed correctly; asking "is this a placeholder?" about it
+    -- invites a yes, which is exactly backwards -- sentinel_used_as_value exists
+    -- to find values that STAND IN for NULL. Pruning per row also costs nothing
+    -- in cache reuse, since state differs per row regardless.
     questions AS (
-        SELECT json_group_object(qid, q_noul(instructions, criteria)) AS q,
-               count(*) AS n_probes
-        FROM plan
+        SELECT s.row_id,
+               json_group_object(p.qid, q_noul(p.instructions, p.criteria)) AS q
+        FROM profile_sample(tbl, rows) s, plan p
+        WHERE p.scope = 'row'
+           OR coalesce(json_type(s.row_json, profile_path(p.column_name)), 'NULL') <> 'NULL'
+        GROUP BY s.row_id
     ),
     asked AS (
         SELECT s.row_id, s.row_json,
                ts_answers(json_object('row', json(s.row_json)), qu.q) AS a
-        FROM profile_sample(tbl, rows) s, questions qu
-        -- With nothing selected there is nothing to ask, and an empty question
-        -- set is an error rather than a no-op.
-        WHERE qu.n_probes > 0
+        FROM profile_sample(tbl, rows) s JOIN questions qu USING (row_id)
     )
     SELECT r.row_id,
            p.scope,
@@ -50,4 +55,6 @@ CREATE OR REPLACE MACRO profile_values(
                 THEN json_extract_string(r.row_json, profile_path(p.column_name)) END AS value,
            r.row_json
     FROM asked r, plan p
+    WHERE p.scope = 'row'
+       OR coalesce(json_type(r.row_json, profile_path(p.column_name)), 'NULL') <> 'NULL'
     ORDER BY probability DESC NULLS LAST, r.row_id;

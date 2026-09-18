@@ -142,6 +142,13 @@ Every finding carries evidence — `examples` holds the actual offending values,
 `example_rows` their sample ordinals, and `profile_values` / `profile_findings`
 return `row_json` so you can join findings back to your own key.
 
+**NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
+"is this a placeholder?" about one invites a yes — exactly backwards, since
+`sentinel_used_as_value` exists to find values that *stand in* for absence. Value
+probes are pruned per row where the column is NULL, which also costs nothing in
+cache reuse (state differs per row regardless) and saves the tokens. A value that
+does stand in for absence — `n/a`, `-1`, `''` — is still caught.
+
 **Probes whose premise is the semantic type are gated on confidence.** If discovery
 is only 0.51 sure that `product_name` holds product *codes*, then asking "is
 `Steel Bracket` a product code?" produces a confident wrong answer on every row.
@@ -192,8 +199,7 @@ cargo test        # request building, response parsing, cache keying, budget
 make test_debug   # full SQL surface, offline against a fixture cache: no key, no network
 ```
 
-`test/fixtures/shipments_cache.jsonl` holds real jev-1.13.0 responses frozen from a
-live run. The replay test sets `offline`, where a cache miss is a hard error — so it
+`test/fixtures/*.jsonl` hold real jev-1.13.0 responses frozen from live runs. The replay test sets `offline`, where a cache miss is a hard error — so it
 cannot quietly pass on invented answers.
 
 With a key, `demo/acceptance.py` checks the end-to-end claim: it plants 12 defects in
@@ -228,3 +234,8 @@ unflagged rows: 4, 10, 11, 13, 16, 18
   smell, not a verdict, or drop it from the catalog.
 - Judgment quality is TypeSafe's, not this extension's. Validate on your own data
   before wiring any of it into an automated decision.
+- **The response cache stores the sampled values in plaintext**, at
+  `~/.cache/duckdb-profiler/cache.jsonl` by default. Profiling real data puts real
+  data there. Point `cache_path` somewhere appropriate, or delete it afterwards.
+- Profiling sends sampled values to `api.typesafe.ai`. `profile_cost()` tells you
+  how much will go, and `profile_probes()` what will be asked, before anything does.
