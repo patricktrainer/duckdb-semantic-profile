@@ -74,7 +74,7 @@ SELECT * FROM sem_cost('shipments');   -- dry run, makes no API calls
 Needs Rust, Python 3 and DuckDB **v1.5.5** (the C API build is version-pinned).
 
 ```bash
-git clone --recursive git@github.com:patricktrainer/profiler.git
+git clone --recursive git@github.com:patricktrainer/duckdb-semantic-profile.git
 # already cloned without --recursive:  git submodule update --init
 
 brew upgrade duckdb        # if you are on an older 1.5.x
