@@ -239,3 +239,7 @@ unflagged rows: 4, 10, 11, 13, 16, 18
   data there. Point `cache_path` somewhere appropriate, or delete it afterwards.
 - Profiling sends sampled values to `api.typesafe.ai`. `profile_cost()` tells you
   how much will go, and `profile_probes()` what will be asked, before anything does.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
