@@ -1,60 +1,60 @@
 # name: test/sql/01_install.test
 # description: extension registers its scalars and installs the macro layer
-# group: [profiler]
+# group: [semantic_profile]
 
 statement error
 SELECT ts_ask('x', '{}');
 ----
 Catalog Error
 
-require profiler
+require semantic_profile
 
 # The test runner uses an in-memory database, where catalog entries do not
 # persist, so the macro layer installs automatically. On a database file it is
 # skipped instead -- loading an extension must not write into someone's database.
 query I
-SELECT (json_extract(profiler_status(), '$.macros_installed'))::BOOLEAN;
+SELECT (json_extract(sem_status(), '$.macros_installed'))::BOOLEAN;
 ----
 true
 
 query I
-SELECT json_extract_string(profiler_settings(), '$.model');
+SELECT json_extract_string(sem_settings(), '$.model');
 ----
 jev-latest
 
 statement ok
-SELECT profiler_config('model', 'jev-latest');
+SELECT sem_config('model', 'jev-latest');
 
 # Unknown settings are rejected rather than silently ignored.
 statement error
-SELECT profiler_config('modle', 'typo');
+SELECT sem_config('modle', 'typo');
 ----
-unknown profiler setting
+unknown semantic_profile setting
 
 query I
-SELECT json_extract(profiler_reset_stats(), '$.requests');
+SELECT json_extract(sem_reset_stats(), '$.requests');
 ----
 0
 
 # The macro layer is retrievable as text, for installing by hand wherever it is
 # not installed automatically.
 query I
-SELECT profiler_sql() LIKE '%CREATE OR REPLACE MACRO profile_report%';
+SELECT sem_sql() LIKE '%CREATE OR REPLACE MACRO sem_report%';
 ----
 true
 
 # The API key is not settable from SQL: that would put it in query logs,
 # duckdb_queries() and shell history. Environment or api_key_file only.
 statement error
-SELECT profiler_config('api_key', 'sk-would-be-logged');
+SELECT sem_config('api_key', 'sk-would-be-logged');
 ----
-unknown profiler setting 'api_key'
+unknown semantic_profile setting 'api_key'
 
 statement ok
-SELECT profiler_config('api_key_file', 'test/fixtures/no-such-key-file');
+SELECT sem_config('api_key_file', 'test/fixtures/no-such-key-file');
 
 # A missing key file is simply no key, not a crash.
 query I
-SELECT json_extract(profiler_settings(), '$.api_key');
+SELECT json_extract(sem_settings(), '$.api_key');
 ----
 null

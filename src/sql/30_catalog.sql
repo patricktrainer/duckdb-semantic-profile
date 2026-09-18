@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- The probe catalog: value-level and row-level checks that a statistical
--- profiler structurally cannot run, because each one is a question about meaning.
+-- semantic_profile structurally cannot run, because each one is a question about meaning.
 --
 -- `{col}` and `{type}` are substituted per column at selection time. Probes are
 -- candidates, not a checklist -- step 2 decides which ones this table warrants.
@@ -10,11 +10,11 @@
 -- because otherwise a shaky classification turns into a confident false positive
 -- on every row.
 --
--- To add your own: CREATE OR REPLACE MACRO profile_catalog() wrapping this
+-- To add your own: CREATE OR REPLACE MACRO sem_catalog() wrapping this
 -- one with UNION ALL. Nothing here is compiled into the extension binary.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE OR REPLACE MACRO profile_catalog() AS TABLE
+CREATE OR REPLACE MACRO sem_catalog() AS TABLE
 SELECT * FROM (VALUES
     -- ── value scope ────────────────────────────────────────────────────────
     ('placeholder_or_test_value', 'value', ['*'], false,

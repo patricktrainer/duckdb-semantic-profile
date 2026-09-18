@@ -6,7 +6,7 @@
 -- we are hunting. One request per column, with the whole battery batched into it.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE OR REPLACE MACRO profile_semantic_types() AS json_object(
+CREATE OR REPLACE MACRO sem_types() AS json_object(
     'person_name',           'Names of individual people: given, family or full names.',
     'organization_name',     'Names of companies, institutions, teams or other organizations.',
     'email_address',         'Email addresses.',
@@ -53,7 +53,7 @@ CREATE OR REPLACE MACRO profile_semantic_types() AS json_object(
     'other',                 'None of the listed types fits what these values actually are.'
 );
 
-CREATE OR REPLACE MACRO profile_roles() AS json_object(
+CREATE OR REPLACE MACRO sem_roles() AS json_object(
     'identifier',  'Identifies the row itself.',
     'foreign_key', 'Points at a row in another table.',
     'measure',     'A quantity you would sum, average or otherwise aggregate.',
@@ -65,16 +65,16 @@ CREATE OR REPLACE MACRO profile_roles() AS json_object(
     'metadata',    'Bookkeeping about the record: who loaded it, when, from where.'
 );
 
-CREATE OR REPLACE MACRO profile_discovery_questions() AS json_object(
+CREATE OR REPLACE MACRO sem_discovery_questions() AS json_object(
     'semantic_type', q_choice(
         json_object(
             'question', 'Judging by the values in `sample_values`, what kind of real-world information does this column actually hold?',
             'note',     'Judge the values themselves. The column name in `column.name` is a hint that may be wrong, and detecting that it is wrong is part of the job.'),
-        profile_semantic_types()),
+        sem_types()),
 
     'role', q_choice(
         'How is this column used in `table`, given its values and the other columns in `sibling_columns`?',
-        profile_roles()),
+        sem_roles()),
 
     'name_matches_values', q_noul(
         'Does the column name in `column.name` accurately describe what is actually stored in `sample_values`?',
@@ -141,10 +141,10 @@ CREATE OR REPLACE MACRO profile_discovery_questions() AS json_object(
 
 -- One row per column. `answers` keeps the raw judgments so you can re-slice
 -- without paying for another call.
-CREATE OR REPLACE MACRO profile_columns(tbl, n := 200) AS TABLE
-    WITH cv AS (SELECT * FROM profile_column_values(tbl, n)),
-    sib AS (SELECT to_json(list(column_name ORDER BY ordinal)) AS cols FROM profile_schema(tbl)),
-    ctx AS (SELECT profile_context_rows(tbl, 3) AS example_rows),
+CREATE OR REPLACE MACRO sem_columns(tbl, n := 200) AS TABLE
+    WITH cv AS (SELECT * FROM sem_column_values(tbl, n)),
+    sib AS (SELECT to_json(list(column_name ORDER BY ordinal)) AS cols FROM sem_schema(tbl)),
+    ctx AS (SELECT sem_context_rows(tbl, 3) AS example_rows),
     asked AS (
         SELECT cv.ordinal, cv.column_name, cv.declared_type, cv.sample_values, cv.distinct_values,
                ts_answers(
@@ -155,7 +155,7 @@ CREATE OR REPLACE MACRO profile_columns(tbl, n := 200) AS TABLE
                        'sample_values',             json(cv.sample_values),
                        'distinct_values_in_sample', cv.distinct_values,
                        'example_rows',              json(ctx.example_rows)),
-                   profile_discovery_questions()) AS a
+                   sem_discovery_questions()) AS a
         FROM cv, sib, ctx
     )
     SELECT

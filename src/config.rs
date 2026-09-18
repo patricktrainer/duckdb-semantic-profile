@@ -1,4 +1,4 @@
-//! Settings, resolved from `profiler_config()` overrides first, then the environment.
+//! Settings, resolved from `sem_config()` overrides first, then the environment.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ fn overrides() -> &'static Mutex<HashMap<String, String>> {
     O.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Keys accepted by `profiler_config()`, so typos are rejected rather than ignored.
+/// Keys accepted by `sem_config()`, so typos are rejected rather than ignored.
 ///
 /// `api_key` is deliberately NOT here. A key passed through SQL lands in query
 /// logs, `duckdb_queries()` and shell history. Supply it as TYPESAFE_API_KEY in
@@ -35,7 +35,7 @@ pub const KEYS: &[&str] = &[
 pub fn set(key: &str, value: &str) -> Result<(), String> {
     if !KEYS.contains(&key) {
         return Err(format!(
-            "unknown profiler setting '{key}'; known settings: {}",
+            "unknown semantic_profile setting '{key}'; known settings: {}",
             KEYS.join(", ")
         ));
     }
@@ -46,13 +46,13 @@ pub fn set(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Override, else `PROFILER_<KEY>`, else `TYPESAFE_<KEY>`, else default.
+/// Override, else `SEMANTIC_PROFILE_<KEY>`, else `TYPESAFE_<KEY>`, else default.
 fn get(key: &str) -> Option<String> {
     if let Some(v) = overrides().lock().unwrap().get(key) {
         return Some(v.clone());
     }
     let up = key.to_uppercase();
-    std::env::var(format!("PROFILER_{up}"))
+    std::env::var(format!("SEMANTIC_PROFILE_{up}"))
         .or_else(|_| std::env::var(format!("TYPESAFE_{up}")))
         .ok()
         .filter(|s| !s.is_empty())
@@ -67,7 +67,7 @@ fn get_usize(key: &str, default: usize) -> usize {
 }
 
 /// The key, from the environment or from a file whose path was configured.
-/// Never from `profiler_config('api_key', ...)`, which is not a settable key.
+/// Never from `sem_config('api_key', ...)`, which is not a settable key.
 fn api_key() -> Option<String> {
     if let Some(k) = get("api_key").filter(|s| !s.trim().is_empty()) {
         return Some(k.trim().to_string());
@@ -119,7 +119,7 @@ pub fn settings() -> Settings {
         endpoint: get_or("endpoint", DEFAULT_ENDPOINT),
         cache_path: get("cache_path").map(PathBuf::from).unwrap_or_else(|| {
             let base = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(base).join(".cache/duckdb-profiler/cache.jsonl")
+            PathBuf::from(base).join(".cache/duckdb-semantic-profile/cache.jsonl")
         }),
         offline: get_bool("offline", false),
         // A deliberately low default: profiling a wide table by accident should
@@ -130,7 +130,7 @@ pub fn settings() -> Settings {
     }
 }
 
-/// Settings as JSON for `profiler_settings()`, with the key redacted.
+/// Settings as JSON for `sem_settings()`, with the key redacted.
 pub fn settings_json() -> String {
     let s = settings();
     serde_json::json!({
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn reads_the_key_from_a_file_and_trims_it() {
-        let dir = std::env::temp_dir().join(format!("profiler-key-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("semantic_profile-key-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("key");
         std::fs::write(&f, "  sk-from-a-file\n").unwrap();

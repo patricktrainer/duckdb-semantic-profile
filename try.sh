@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open a DuckDB shell with the profiler loaded and the demo table ready.
+# Open a DuckDB shell with the semantic_profile loaded and the demo table ready.
 #
 # The extension is pinned to DuckDB v1.5.5 by the unstable C API, so this uses the
 # system duckdb when it is that version, and otherwise falls back to a CLI in
@@ -20,8 +20,8 @@ else
     exit 1
 fi
 
-EXT=build/release/profiler.duckdb_extension
-[ -f "$EXT" ] || EXT=build/debug/profiler.duckdb_extension
+EXT=build/release/semantic_profile.duckdb_extension
+[ -f "$EXT" ] || EXT=build/debug/semantic_profile.duckdb_extension
 [ -f "$EXT" ] || { echo "build first: make release"; exit 1; }
 
 # macOS's hardened runtime refuses a relative path in dlopen, so LOAD needs an
@@ -38,11 +38,11 @@ EOF
 
 if [ -z "${TYPESAFE_API_KEY:-}" ]; then
     echo "note: no TYPESAFE_API_KEY -- running against the frozen fixture cache (offline)."
-    echo "      profile('shipments', rows:=20) replays; anything else will error on a cache miss."
+    echo "      sem_profile('shipments', rows:=20) replays; anything else will error on a cache miss."
     cat >> "$INIT" <<'EOF'
 .output /dev/null
-SELECT profiler_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
-SELECT profiler_config('offline', 'true');
+SELECT sem_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
+SELECT sem_config('offline', 'true');
 .output
 EOF
 fi
@@ -53,12 +53,12 @@ cat <<'EOF'
   cannot see. Try:
 
     SUMMARIZE shipments;                          -- looks perfectly healthy
-    SELECT * FROM profile('shipments', rows:=20); -- what it actually contains
+    SELECT * FROM sem_profile('shipments', rows:=20); -- what it actually contains
 
-    SELECT * FROM profile_columns('shipments');   -- what each column really is
-    SELECT * FROM profile_probes('shipments');    -- checks chosen for this table
-    SELECT * FROM profile_cost('shipments');      -- dry run, spends nothing
-    SELECT profiler_stats();                      -- requests vs cache hits
+    SELECT * FROM sem_columns('shipments');   -- what each column really is
+    SELECT * FROM sem_probes('shipments');    -- checks chosen for this table
+    SELECT * FROM sem_cost('shipments');      -- dry run, spends nothing
+    SELECT sem_stats();                      -- requests vs cache hits
 
 EOF
 

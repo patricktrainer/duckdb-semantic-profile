@@ -1,8 +1,8 @@
 # name: test/sql/02_catalog.test
 # description: the probe catalog and the deterministic sampling layer
-# group: [profiler]
+# group: [semantic_profile]
 
-require profiler
+require semantic_profile
 
 statement ok
 CREATE TABLE t AS SELECT * FROM (VALUES
@@ -10,24 +10,24 @@ CREATE TABLE t AS SELECT * FROM (VALUES
 
 # Every catalog entry is value- or row-scoped, has text and criteria.
 query I
-SELECT count(*) FROM profile_catalog()
+SELECT count(*) FROM sem_catalog()
 WHERE scope NOT IN ('value','row') OR instructions IS NULL OR criteria IS NULL;
 ----
 0
 
 query I
-SELECT count(*) > 0 FROM profile_catalog() WHERE scope = 'row';
+SELECT count(*) > 0 FROM sem_catalog() WHERE scope = 'row';
 ----
 true
 
 # Probe ids are unique; the plan numbering depends on it.
 query I
-SELECT count(*) = count(DISTINCT probe_id) FROM profile_catalog();
+SELECT count(*) = count(DISTINCT probe_id) FROM sem_catalog();
 ----
 true
 
 query II
-SELECT column_name, declared_type FROM profile_schema('t') ORDER BY ordinal;
+SELECT column_name, declared_type FROM sem_schema('t') ORDER BY ordinal;
 ----
 id	INTEGER
 country	VARCHAR
@@ -38,30 +38,30 @@ email	VARCHAR
 # Running it twice must give byte-identical output -- this is what makes the
 # response cache hit on a re-run.
 query I
-SELECT (SELECT list(row_json) FROM profile_sample('t', n:=2))
-     = (SELECT list(row_json) FROM profile_sample('t', n:=2));
+SELECT (SELECT list(row_json) FROM sem_sample('t', n:=2))
+     = (SELECT list(row_json) FROM sem_sample('t', n:=2));
 ----
 true
 
 query I
-SELECT count(*) FROM profile_sample('t', n:=2);
+SELECT count(*) FROM sem_sample('t', n:=2);
 ----
 2
 
 # Distinct values per column, in first-seen order.
 query I
-SELECT sample_values FROM profile_column_values('t') WHERE column_name = 'country';
+SELECT sample_values FROM sem_column_values('t') WHERE column_name = 'country';
 ----
 ["US","GB"]
 
 # Placeholder substitution for a column's probe text.
 query I
-SELECT profile_render('check `row.{col}` holds a {type}', 'email', 'email_address');
+SELECT sem_render('check `row.{col}` holds a {type}', 'email', 'email_address');
 ----
 check `row.email` holds a email_address
 
 # A column name with a quote in it must not break the JSON path.
 query I
-SELECT profile_path('we"ird');
+SELECT sem_path('we"ird');
 ----
 $."we\"ird"

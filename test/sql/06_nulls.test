@@ -1,21 +1,21 @@
 # name: test/sql/06_nulls.test
 # description: a SQL NULL is not a sentinel -- regression, replayed offline
-# group: [profiler]
+# group: [semantic_profile]
 #
-# Found by running the profiler against a real warehouse. Columns that were
+# Found by running the semantic_profile against a real warehouse. Columns that were
 # 86-99% NULL came back flagged as sentinel_used_as_value at up to 100%, which
 # is exactly backwards: NULL is absence expressed correctly, and that probe
 # exists to find values that STAND IN for absence. It buried every real finding.
 #
 # The demo table has no NULLs anywhere, which is why the original suite missed it.
 
-require profiler
+require semantic_profile
 
 statement ok
-SELECT profiler_config('cache_path', 'test/fixtures/sparse_cache.jsonl');
+SELECT sem_config('cache_path', 'test/fixtures/sparse_cache.jsonl');
 
 statement ok
-SELECT profiler_config('offline', 'true');
+SELECT sem_config('offline', 'true');
 
 statement ok
 CREATE TABLE sparse AS SELECT * FROM (VALUES
@@ -29,7 +29,7 @@ CREATE TABLE sparse AS SELECT * FROM (VALUES
 
 # THE regression: no value probe is ever answered against a NULL.
 query I
-SELECT count(*) FROM profile_values('sparse', rows:=6)
+SELECT count(*) FROM sem_values('sparse', rows:=6)
 WHERE scope = 'value' AND value IS NULL;
 ----
 0
@@ -37,39 +37,39 @@ WHERE scope = 'value' AND value IS NULL;
 # `note` is NULL in every row, so it contributes no value judgments at all --
 # and, because questions are pruned per row, costs no tokens either.
 query I
-SELECT count(*) FROM profile_values('sparse', rows:=6) WHERE column_name = 'note';
+SELECT count(*) FROM sem_values('sparse', rows:=6) WHERE column_name = 'note';
 ----
 0
 
 # The other half of the distinction: values that stand in for absence are still
 # caught. 'n/a' in an email column...
 query I
-SELECT max(probability) > 0.9 FROM profile_values('sparse', rows:=6)
+SELECT max(probability) > 0.9 FROM sem_values('sparse', rows:=6)
 WHERE column_name = 'email' AND probe_id = 'sentinel_used_as_value' AND value = 'n/a';
 ----
 true
 
 # ...and -1 in a count column.
 query I
-SELECT max(probability) > 0.7 FROM profile_values('sparse', rows:=6)
+SELECT max(probability) > 0.7 FROM sem_values('sparse', rows:=6)
 WHERE column_name = 'retry_count' AND probe_id = 'sentinel_used_as_value' AND value = '-1';
 ----
 true
 
 # Rows are still judged as wholes even when most of their fields are NULL.
 query I
-SELECT count(*) > 0 FROM profile_values('sparse', rows:=6) WHERE scope = 'row';
+SELECT count(*) > 0 FROM sem_values('sparse', rows:=6) WHERE scope = 'row';
 ----
 true
 
 # Replayed entirely from the fixture.
 query I
-SELECT json_extract(profiler_stats(), '$.requests');
+SELECT json_extract(sem_stats(), '$.requests');
 ----
 0
 
 statement ok
-SELECT profiler_config('offline', 'false');
+SELECT sem_config('offline', 'false');
 
 statement ok
-SELECT profiler_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
+SELECT sem_config('cache_path', 'test/fixtures/shipments_cache.jsonl');

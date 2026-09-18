@@ -6,7 +6,7 @@ test suite replay the whole pipeline offline, with no key and no network.
 import json, os, shutil, sys
 
 src = os.path.expanduser(sys.argv[1] if len(sys.argv) > 1
-                         else "~/.cache/duckdb-profiler/cache.jsonl")
+                         else "~/.cache/duckdb-semantic-profile/cache.jsonl")
 dst = "test/fixtures/shipments_cache.jsonl"
 os.makedirs("test/fixtures", exist_ok=True)
 

@@ -32,9 +32,9 @@ pub fn reserve(max_requests: usize) -> Result<(), String> {
     if prior >= max_requests as u64 {
         REQUESTS.fetch_sub(1, Ordering::Relaxed);
         return Err(format!(
-            "profiler request budget exhausted: {max_requests} requests already issued this session. \
-             Raise it with SELECT profiler_config('max_requests', '<n>'), or reset counters with \
-             SELECT profiler_reset_stats()."
+            "semantic_profile request budget exhausted: {max_requests} requests already issued this session. \
+             Raise it with SELECT sem_config('max_requests', '<n>'), or reset counters with \
+             SELECT sem_reset_stats()."
         ));
     }
     Ok(())

@@ -1,4 +1,4 @@
-//! duckdb-profiler — semantic profiling of the *values* in a table.
+//! duckdb-semantic-profile — semantic profiling of the *values* in a table.
 //!
 //! `SUMMARIZE` and friends describe the shape of data: types, ranges, quantiles,
 //! null and distinct counts. They cannot see that an `email` column holds `n/a`,
@@ -47,12 +47,12 @@ pub fn sql_text() -> String {
 #[duckdb_entrypoint_c_api]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_scalar_function::<primitives::TsAsk>("ts_ask")?;
-    con.register_scalar_function::<primitives::ProfilerConfig>("profiler_config")?;
-    con.register_scalar_function::<primitives::ProfilerSettings>("profiler_settings")?;
-    con.register_scalar_function::<primitives::ProfilerStats>("profiler_stats")?;
-    con.register_scalar_function::<primitives::ProfilerResetStats>("profiler_reset_stats")?;
-    con.register_scalar_function::<primitives::ProfilerSql>("profiler_sql")?;
-    con.register_scalar_function::<primitives::ProfilerStatus>("profiler_status")?;
+    con.register_scalar_function::<primitives::ProfilerConfig>("sem_config")?;
+    con.register_scalar_function::<primitives::ProfilerSettings>("sem_settings")?;
+    con.register_scalar_function::<primitives::ProfilerStats>("sem_stats")?;
+    con.register_scalar_function::<primitives::ProfilerResetStats>("sem_reset_stats")?;
+    con.register_scalar_function::<primitives::ProfilerSql>("sem_sql")?;
+    con.register_scalar_function::<primitives::ProfilerStatus>("sem_status")?;
 
     install_macros(&con);
     Ok(())
@@ -81,7 +81,7 @@ fn install_target(con: &Connection) -> Result<(bool, String), Box<dyn Error>> {
 
 fn install_macros(con: &Connection) {
     // An explicit opt-in for people who do want the macros in their own database.
-    let forced = std::env::var("PROFILER_INSTALL_MACROS")
+    let forced = std::env::var("SEMANTIC_PROFILE_INSTALL_MACROS")
         .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false);
 
@@ -99,7 +99,7 @@ fn install_macros(con: &Connection) {
         Ok((_, why)) => primitives::record_install_skip(&format!(
             "the macro layer was not installed because {why}, and installing it would \
              write its macros into that catalog. Profile from an in-memory database with \
-             this one ATTACHed READ_ONLY, or set PROFILER_INSTALL_MACROS=1 before LOAD to \
+             this one ATTACHed READ_ONLY, or set SEMANTIC_PROFILE_INSTALL_MACROS=1 before LOAD to \
              install them here anyway"
         )),
         Err(e) => primitives::record_install_skip(&format!(

@@ -1,22 +1,22 @@
 # name: test/sql/05_replay.test
 # description: full pipeline replayed offline against the frozen demo responses
-# group: [profiler]
+# group: [semantic_profile]
 #
 # No API key and no network. Every judgment below came from a real jev-1.13.0 run
 # against demo/messy.sql and was frozen into test/fixtures/shipments_cache.jsonl.
 # Offline mode makes a cache miss a hard error, so this cannot silently pass on
 # fabricated answers.
 
-require profiler
+require semantic_profile
 
 statement ok
-SELECT profiler_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
+SELECT sem_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
 
 statement ok
-SELECT profiler_config('offline', 'true');
+SELECT sem_config('offline', 'true');
 
 statement ok
-SELECT profiler_reset_stats();
+SELECT sem_reset_stats();
 
 statement ok
 CREATE TABLE shipments AS SELECT * FROM (VALUES
@@ -46,19 +46,19 @@ CREATE TABLE shipments AS SELECT * FROM (VALUES
 # Discovery reads the values, not the names: a VARCHAR column of "12 kg" and
 # "26.4" is a physical measurement whose unit is mixed.
 query II
-SELECT semantic_type, unit_or_currency FROM profile_columns('shipments') WHERE column_name = 'weight';
+SELECT semantic_type, unit_or_currency FROM sem_columns('shipments') WHERE column_name = 'weight';
 ----
 physical_measurement	mixed
 
 # PII is found in free text, in a column named nothing like it.
 query I
-SELECT sensitive_personal_data > 0.9 FROM profile_columns('shipments') WHERE column_name = 'notes';
+SELECT sensitive_personal_data > 0.9 FROM sem_columns('shipments') WHERE column_name = 'notes';
 ----
 true
 
 # The adaptive step picks the check that matches the planted defect.
 query I
-SELECT selected FROM profile_probes('shipments')
+SELECT selected FROM sem_probes('shipments')
 WHERE column_name = 'address' AND probe_id = 'operational_note_in_data_field';
 ----
 true
@@ -66,15 +66,15 @@ true
 # A probe whose premise is the semantic type is skipped when discovery was unsure.
 # product_name was classified sku_or_product_code at ~0.51 confidence.
 query I
-SELECT count(*) FROM profile_probes('shipments')
+SELECT count(*) FROM sem_probes('shipments')
 WHERE column_name = 'product_name' AND probe_id = 'type_mismatch';
 ----
 0
 
-# Cross-column contradictions, which no column-at-a-time profiler can reach.
+# Cross-column contradictions, which no column-at-a-time semantic_profile can reach.
 query I
 SELECT count(DISTINCT json_extract(row_json,'$.id')::INT)
-FROM profile_findings('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
+FROM sem_findings('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
 ----
 2
 
@@ -82,7 +82,7 @@ FROM profile_findings('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent'
 # 9999-12-31 sentinel standing in for the real one. All three are real.
 query I
 SELECT count(DISTINCT json_extract(row_json,'$.id')::INT)
-FROM profile_findings('shipments', rows:=20) WHERE probe_id = 'status_timeline_inconsistent';
+FROM sem_findings('shipments', rows:=20) WHERE probe_id = 'status_timeline_inconsistent';
 ----
 3
 
@@ -91,20 +91,20 @@ FROM profile_findings('shipments', rows:=20) WHERE probe_id = 'status_timeline_i
 query II
 SELECT round(max(probability) FILTER (value NOT LIKE '%kg%'), 2),
        round(max(probability) FILTER (value LIKE '%kg%'), 2)
-FROM profile_values('shipments', rows:=20)
+FROM sem_values('shipments', rows:=20)
 WHERE column_name = 'weight' AND probe_id = 'unit_ambiguous';
 ----
 0.57	0.02
 
 # Re-slicing a report is free: changing the threshold re-reads cached judgments.
 query I
-SELECT (SELECT count(*) FROM profile_report('shipments', threshold:=0.9, rows:=20))
-     < (SELECT count(*) FROM profile_report('shipments', threshold:=0.5, rows:=20));
+SELECT (SELECT count(*) FROM sem_report('shipments', threshold:=0.9, rows:=20))
+     < (SELECT count(*) FROM sem_report('shipments', threshold:=0.5, rows:=20));
 ----
 true
 
 # The whole replay ran without a single request.
 query I
-SELECT json_extract(profiler_stats(), '$.requests');
+SELECT json_extract(sem_stats(), '$.requests');
 ----
 0

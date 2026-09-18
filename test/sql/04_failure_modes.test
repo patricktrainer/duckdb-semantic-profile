@@ -1,14 +1,14 @@
 # name: test/sql/04_failure_modes.test
 # description: misconfiguration fails loudly; malformed questions fail per row
-# group: [profiler]
+# group: [semantic_profile]
 
-require profiler
-
-statement ok
-SELECT profiler_config('cache_path', 'test/fixtures/no-such-cache.jsonl');
+require semantic_profile
 
 statement ok
-SELECT profiler_config('offline', 'true');
+SELECT sem_config('cache_path', 'test/fixtures/no-such-cache.jsonl');
+
+statement ok
+SELECT sem_config('offline', 'true');
 
 # A cache miss in offline mode is a hard error, not a silent NULL. Tests that
 # replay from a fixture depend on this: a miss must be impossible to overlook.
@@ -42,7 +42,7 @@ true
 # Restore the defaults: these settings are process-global and the runner may
 # execute every .test file in one process, in an order we do not control.
 statement ok
-SELECT profiler_config('offline', 'false');
+SELECT sem_config('offline', 'false');
 
 statement ok
-SELECT profiler_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
+SELECT sem_config('cache_path', 'test/fixtures/shipments_cache.jsonl');

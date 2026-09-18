@@ -127,7 +127,7 @@ fn broadcast(
     Ok(())
 }
 
-/// `profiler_config(key, value) -> VARCHAR`
+/// `sem_config(key, value) -> VARCHAR`
 pub struct ProfilerConfig;
 
 impl VScalar for ProfilerConfig {
@@ -185,9 +185,9 @@ static INSTALL_SKIP: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(No
 
 pub fn record_install_skip(reason: &str) {
     *INSTALL_SKIP.lock().unwrap() = Some(format!(
-        "{reason}. The scalar functions (ts_ask, profiler_config, ...) work regardless. \
+        "{reason}. The scalar functions (ts_ask, sem_config, ...) work regardless. \
          To install the macro layer on this connection, run the script that \
-         profiler_sql() returns."
+         sem_sql() returns."
     ));
 }
 

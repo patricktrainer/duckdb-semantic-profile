@@ -29,7 +29,7 @@ const MAX_ATTEMPTS: u32 = 5;
 
 /// Single-flight, keyed on the cache key.
 ///
-/// The SQL layers evaluate profile_columns() more than once, and DuckDB may run
+/// The SQL layers evaluate sem_columns() more than once, and DuckDB may run
 /// those evaluations on different threads. Deduplicating within a batch is not
 /// enough: without this, two threads can both miss the cache for the same key and
 /// both pay for it. A waiter re-reads the cache after the owner finishes.
@@ -88,7 +88,7 @@ fn call(s: &Settings, state: &Value, questions: &Value) -> Result<String, AskErr
     let Some(api_key) = s.api_key.as_ref() else {
         return Err(AskError::Hard(
             "no TypeSafe API key. Set TYPESAFE_API_KEY in the environment, or call \
-             SELECT profiler_config('api_key', '<key>')."
+             SELECT sem_config('api_key', '<key>')."
                 .into(),
         ));
     };
@@ -186,8 +186,8 @@ pub fn resolve(pairs: &[(Value, Value)]) -> Vec<Result<String, AskError>> {
 
     if s.offline {
         let msg = format!(
-            "profiler is in offline mode and {} request(s) are not in the cache at {}. \
-             Unset PROFILER_OFFLINE to allow live calls.",
+            "semantic_profile is in offline mode and {} request(s) are not in the cache at {}. \
+             Unset SEMANTIC_PROFILE_OFFLINE to allow live calls.",
             pending.len(),
             s.cache_path.to_string_lossy()
         );

@@ -1,17 +1,17 @@
-"""Acceptance: does the profiler independently find the defects planted in
+"""Acceptance: does the semantic_profile independently find the defects planted in
 demo/messy.sql? Joins findings back to the table's own id, not the sample ordinal."""
 import sys, duckdb
 
-EXT = "./build/debug/profiler.duckdb_extension"
+EXT = "./build/debug/semantic_profile.duckdb_extension"
 con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
 con.execute(f"LOAD '{EXT}'")
 con.execute(open("demo/messy.sql").read())
-con.execute("SELECT profiler_reset_stats()")
+con.execute("SELECT sem_reset_stats()")
 
 con.execute("""
 CREATE TABLE f AS
 SELECT json_extract(row_json,'$.id')::INT AS id, scope, column_name, probe_id, probability
-FROM profile_findings('shipments', threshold:=0.7, rows:=20)""")
+FROM sem_findings('shipments', threshold:=0.7, rows:=20)""")
 
 # (label, expected id, predicate over findings)
 EXPECT = [
@@ -49,7 +49,7 @@ print("\nCalibrated uncertainty (bare numbers vs values that state their unit):"
 sep = con.sql("""
   SELECT round(max(CASE WHEN value NOT LIKE '%kg%' THEN probability END), 2) AS bare,
          round(max(CASE WHEN value LIKE '%kg%'     THEN probability END), 2) AS with_unit
-  FROM profile_values('shipments', rows:=20)
+  FROM sem_values('shipments', rows:=20)
   WHERE column_name='weight' AND probe_id='unit_ambiguous'""").fetchone()
 print(f"  bare numbers (26.4, 35.2): up to {sep[0]}   values stating kg: up to {sep[1]}")
 assert sep[0] > 0.4 and sep[1] < 0.1, "unit_ambiguous should separate these cleanly"
@@ -58,5 +58,5 @@ print("  separation holds")
 # The other half of the claim: SUMMARIZE sees none of this.
 print("\nUnflagged rows (should be the clean ones):")
 print(con.sql("SELECT id FROM shipments WHERE id NOT IN (SELECT id FROM f) ORDER BY id").fetchall())
-print("\nrequests used:", con.sql("SELECT json_extract(profiler_stats(),'$.requests')").fetchone()[0])
+print("\nrequests used:", con.sql("SELECT json_extract(sem_stats(),'$.requests')").fetchone()[0])
 sys.exit(0 if found >= 10 else 1)

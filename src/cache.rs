@@ -125,7 +125,10 @@ mod tests {
 
     #[test]
     fn roundtrips_through_a_file() {
-        let dir = std::env::temp_dir().join(format!("profiler-cache-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "semantic_profile-cache-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("cache.jsonl");
         let (st, qs) = (json!({"v": "x"}), json!({"q": {"type": "noul"}}));
@@ -150,8 +153,10 @@ mod tests {
 
     #[test]
     fn skips_corrupt_lines() {
-        let dir =
-            std::env::temp_dir().join(format!("profiler-corrupt-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "semantic_profile-corrupt-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cache.jsonl");

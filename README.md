@@ -1,4 +1,4 @@
-# duckdb-profiler
+# duckdb-semantic-profile
 
 Profile what the **values** in a table actually mean, from inside DuckDB.
 
@@ -7,8 +7,8 @@ data: types, ranges, quantiles, null and distinct counts. They are structurally
 blind to what the values mean. This extension asks the other question.
 
 ```sql
-LOAD profiler;
-SELECT * FROM profile('shipments');
+LOAD semantic_profile;
+SELECT * FROM sem_profile('shipments');
 ```
 
 ```
@@ -56,7 +56,7 @@ Three steps, and the middle one is what makes it adapt rather than run a checkli
 2. **Select** — one request per column. Code narrows the 20-probe catalog to
    probes that could apply to each discovered semantic type, then asks, per
    candidate, whether running it *here* would surface anything. Only survivors run.
-   `profile_probes()` shows you this before you pay for it.
+   `sem_probes()` shows you this before you pay for it.
 3. **Execute** — one request per row. The state is the whole row; the questions are
    every selected value probe across every column *plus* every row-level coherence
    check. Since state is what costs tokens and answers are independent, the
@@ -66,7 +66,7 @@ Cost is therefore `2 × columns + rows`, not `columns × rows`. A 20-column tabl
 500 sampled rows is ~540 requests.
 
 ```sql
-SELECT * FROM profile_cost('shipments');   -- dry run, makes no API calls
+SELECT * FROM sem_cost('shipments');   -- dry run, makes no API calls
 ```
 
 ## Install
@@ -87,9 +87,9 @@ duckdb -unsigned
 a venv under `configure/` and downloads a matching DuckDB for the test runner.
 
 ```sql
-LOAD './build/debug/profiler.duckdb_extension';
+LOAD './build/debug/semantic_profile.duckdb_extension';
 .read demo/messy.sql
-SELECT * FROM profile('shipments');
+SELECT * FROM sem_profile('shipments');
 ```
 
 ## Where the macros go
@@ -102,19 +102,19 @@ database**, where nothing persists.
 To profile a database file, open DuckDB in memory and attach it read-only:
 
 ```sql
-LOAD '/abs/path/to/profiler.duckdb_extension';
+LOAD '/abs/path/to/semantic_profile.duckdb_extension';
 ATTACH '/path/to/warehouse.duckdb' AS db (READ_ONLY);
 
-SELECT * FROM profile_cost('db.main.orders', rows := 50);
-SELECT * FROM profile('db.main.orders', rows := 50);
+SELECT * FROM sem_cost('db.main.orders', rows := 50);
+SELECT * FROM sem_profile('db.main.orders', rows := 50);
 ```
 
 `LOAD` before `ATTACH`, and qualified table names work throughout.
 
 On a file-backed or read-only database the macros are skipped, `LOAD` still
-succeeds, the scalar functions still work, and `profiler_status()` says why. Set
-`PROFILER_INSTALL_MACROS=1` before `LOAD` to install them into that catalog
-anyway, or run the script `profiler_sql()` returns on your own connection.
+succeeds, the scalar functions still work, and `sem_status()` says why. Set
+`SEMANTIC_PROFILE_INSTALL_MACROS=1` before `LOAD` to install them into that catalog
+anyway, or run the script `sem_sql()` returns on your own connection.
 
 ## API
 
@@ -123,13 +123,13 @@ anyway, or run the script `profiler_sql()` returns on your own connection.
 | | |
 |---|---|
 | `profile(tbl, threshold := 0.7, rows := 100, n := 200)` | every finding, column- and value-level |
-| `profile_columns(tbl, n := 200)` | what each column actually is |
-| `profile_probes(tbl, …)` | which checks were chosen, and their relevance |
-| `profile_values(tbl, rows := 100, …)` | raw per-row judgments, long form |
-| `profile_report(tbl, threshold := 0.7, …)` | findings aggregated per probe, with evidence |
-| `profile_findings(tbl, …)` | the individual flagged rows |
-| `profile_cost(tbl, …)` | dry run: request and token estimate |
-| `profile_catalog()` | the probe catalog |
+| `sem_columns(tbl, n := 200)` | what each column actually is |
+| `sem_probes(tbl, …)` | which checks were chosen, and their relevance |
+| `sem_values(tbl, rows := 100, …)` | raw per-row judgments, long form |
+| `sem_report(tbl, threshold := 0.7, …)` | findings aggregated per probe, with evidence |
+| `sem_findings(tbl, …)` | the individual flagged rows |
+| `sem_cost(tbl, …)` | dry run: request and token estimate |
+| `sem_catalog()` | the probe catalog |
 
 **Primitives** — TypeSafe judgments as plain SQL, useful on their own.
 
@@ -143,8 +143,8 @@ SELECT ts_score(notes, 'How urgent is this?', ['routine','soon','immediate']) FR
 one request. `ts_noul` / `ts_choice` / `ts_score` are one-shot wrappers over it; inside
 the pipeline questions are always batched instead.
 
-**Admin** — `profiler_config(k, v)`, `profiler_settings()`, `profiler_stats()`,
-`profiler_reset_stats()`, `profiler_status()`, `profiler_sql()`.
+**Admin** — `sem_config(k, v)`, `sem_settings()`, `sem_stats()`,
+`sem_reset_stats()`, `sem_status()`, `sem_sql()`.
 
 ## Reading the output
 
@@ -152,7 +152,7 @@ Judgments are **probabilities, not verdicts**. `threshold` is an argument, and
 changing it re-reads cached judgments rather than re-asking — so re-slicing a
 report costs nothing.
 
-`profile_report` also reports `needs_review`: rows whose probability lands near 0.5.
+`sem_report` also reports `needs_review`: rows whose probability lands near 0.5.
 A Noul near 0.5 means genuinely uncertain, not "medium severity".
 
 That band earns its keep. On the demo's `weight` column — `12 kg` alongside a bare
@@ -163,7 +163,7 @@ binary classifier would have to pick a side and be wrong either way; here the tw
 rows land in `needs_review` and a person decides.
 
 Every finding carries evidence — `examples` holds the actual offending values,
-`example_rows` their sample ordinals, and `profile_values` / `profile_findings`
+`example_rows` their sample ordinals, and `sem_values` / `sem_findings`
 return `row_json` so you can join findings back to your own key.
 
 **NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
@@ -181,20 +181,20 @@ allowed to launder a shaky classification into 20 findings.
 
 ## Settings
 
-Override with `SELECT profiler_config(key, value)`, or the environment as
-`PROFILER_<KEY>` / `TYPESAFE_<KEY>`.
+Override with `SELECT sem_config(key, value)`, or the environment as
+`SEMANTIC_PROFILE_<KEY>` / `TYPESAFE_<KEY>`.
 
 | key | default | |
 |---|---|---|
 | `api_key_file` | — | path to a file holding the key |
 | `model` | `jev-latest` | |
-| `cache_path` | `~/.cache/duckdb-profiler/cache.jsonl` | |
+| `cache_path` | `~/.cache/duckdb-semantic-profile/cache.jsonl` | |
 | `offline` | `false` | serve from cache only; a miss is a hard error |
 | `max_requests` | `2000` | per-process cap; exceeding it is an error, not a warning |
 | `concurrency` | `8` | |
 | `timeout_secs` | `60` | |
 
-**The API key is never settable from SQL.** `profiler_config('api_key', ...)` is
+**The API key is never settable from SQL.** `sem_config('api_key', ...)` is
 rejected, because a key passed through SQL lands in query logs, `duckdb_queries()`
 and shell history. Supply it as `TYPESAFE_API_KEY` in the environment, or point
 `api_key_file` at a file containing it.
@@ -208,7 +208,7 @@ and appended to a JSONL file. Sampling is ordered by a hash of row content rathe
 than `random()`, so a re-run hits the cache instead of re-billing. The cache is
 plain text on purpose: it is readable, diffable, and doubles as a test fixture.
 
-**Cost control.** `profile_cost()` dry-runs, `profile_probes()` shows what will run,
+**Cost control.** `sem_cost()` dry-runs, `sem_probes()` shows what will run,
 `max_requests` is a hard stop, and sampling is on by default — `rows` and `n` are
 caps you raise deliberately.
 
@@ -217,11 +217,11 @@ caps you raise deliberately.
 The probe catalog and every question is SQL, not compiled into the binary:
 
 ```sql
-SELECT instructions, criteria FROM profile_catalog() WHERE probe_id = 'embedded_pii';
-SELECT profiler_sql();   -- the whole macro layer
+SELECT instructions, criteria FROM sem_catalog() WHERE probe_id = 'embedded_pii';
+SELECT sem_sql();   -- the whole macro layer
 ```
 
-Add your own probes by redefining `profile_catalog()` to `UNION ALL` your rows onto
+Add your own probes by redefining `sem_catalog()` to `UNION ALL` your rows onto
 it. Scope is `value` (per value, with `{col}` and `{type}` substituted) or `row`
 (per whole row).
 
@@ -252,7 +252,7 @@ unflagged rows: 4, 10, 11, 13, 16, 18
 - Loading the extension never writes to your database. See **Where the macros go**.
 - Sampling uses `ORDER BY hash(row) LIMIT n`, which reads the whole table. For very
   large tables, profile a pre-sampled view.
-- `profile_columns` is re-evaluated by the later stages. That costs no API requests
+- `sem_columns` is re-evaluated by the later stages. That costs no API requests
   — repeat calls are cache hits, and concurrent duplicates are collapsed by a
   single-flight lock so a cold cache cannot double-bill — but it does re-hash.
 - `row_is_test_data` is broad by design and fires readily on synthetic data (the
@@ -261,10 +261,10 @@ unflagged rows: 4, 10, 11, 13, 16, 18
 - Judgment quality is TypeSafe's, not this extension's. Validate on your own data
   before wiring any of it into an automated decision.
 - **The response cache stores the sampled values in plaintext**, at
-  `~/.cache/duckdb-profiler/cache.jsonl` by default. Profiling real data puts real
+  `~/.cache/duckdb-semantic-profile/cache.jsonl` by default. Profiling real data puts real
   data there. Point `cache_path` somewhere appropriate, or delete it afterwards.
-- Profiling sends sampled values to `api.typesafe.ai`. `profile_cost()` tells you
-  how much will go, and `profile_probes()` what will be asked, before anything does.
+- Profiling sends sampled values to `api.typesafe.ai`. `sem_cost()` tells you
+  how much will go, and `sem_probes()` what will be asked, before anything does.
 
 ## License
 
