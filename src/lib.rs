@@ -54,14 +54,57 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_scalar_function::<primitives::ProfilerSql>("profiler_sql")?;
     con.register_scalar_function::<primitives::ProfilerStatus>("profiler_status")?;
 
-    // The macros are ordinary catalog entries, which needs a writable database.
-    // On a read-only one that is not fatal: ts_ask and the rest still work, and
-    // profiler_status() explains how to install the macro layer by hand.
-    for (name, sql) in SQL_LAYERS {
-        if let Err(e) = con.execute_batch(sql) {
-            primitives::record_install_failure(name, &e.to_string());
-            break;
-        }
-    }
+    install_macros(&con);
     Ok(())
+}
+
+/// Whether installing the macro layer would write into the user's database file.
+///
+/// The macros are ordinary catalog entries, so `CREATE MACRO` on a file-backed
+/// database persists them into that file. Loading an extension should not modify
+/// someone's database, so we install automatically only where nothing persists --
+/// an in-memory database, which is also the common case for ad-hoc profiling.
+fn install_target(con: &Connection) -> Result<(bool, String), Box<dyn Error>> {
+    let row: (String, bool, bool) = con.query_row(
+        "SELECT database_name, (path IS NULL OR path = '') AS is_memory, readonly \
+         FROM duckdb_databases() WHERE NOT internal LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    let (name, is_memory, readonly) = row;
+    Ok(match (is_memory, readonly) {
+        (true, _) => (true, "in-memory database".into()),
+        (false, true) => (false, format!("'{name}' is read-only")),
+        (false, false) => (false, format!("'{name}' is a database file on disk")),
+    })
+}
+
+fn install_macros(con: &Connection) {
+    // An explicit opt-in for people who do want the macros in their own database.
+    let forced = std::env::var("PROFILER_INSTALL_MACROS")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+
+    match install_target(con) {
+        Ok((auto, why)) if auto || forced => {
+            for (name, sql) in SQL_LAYERS {
+                if let Err(e) = con.execute_batch(sql) {
+                    primitives::record_install_skip(&format!(
+                        "the '{name}' SQL layer could not be installed ({why}): {e}"
+                    ));
+                    return;
+                }
+            }
+        }
+        Ok((_, why)) => primitives::record_install_skip(&format!(
+            "the macro layer was not installed because {why}, and installing it would \
+             write its macros into that catalog. Profile from an in-memory database with \
+             this one ATTACHed READ_ONLY, or set PROFILER_INSTALL_MACROS=1 before LOAD to \
+             install them here anyway"
+        )),
+        Err(e) => primitives::record_install_skip(&format!(
+            "could not determine whether installing the macro layer would write to disk, \
+             so it was skipped: {e}"
+        )),
+    }
 }

@@ -179,25 +179,22 @@ macro_rules! nullary_varchar {
     };
 }
 
-/// Set when the macro layer could not be installed at load time, so the failure
-/// surfaces as an explanation rather than as "function does not exist".
-static INSTALL_FAILURE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Set when the macro layer was not installed at load time, so the reason surfaces
+/// as an explanation rather than as "function does not exist".
+static INSTALL_SKIP: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-pub fn record_install_failure(layer: &str, error: &str) {
-    *INSTALL_FAILURE.lock().unwrap() = Some(format!(
-        "The '{layer}' SQL layer could not be installed: {error}. \
-         This usually means the current database is read-only. ts_ask() and the other \
-         scalar functions still work. To install the macro layer by hand, run the script \
-         returned by profiler_sql() on your own connection -- for example \
-         duckdb -c \"LOAD profiler; COPY (SELECT profiler_sql()) TO 'p.sql' (FORMAT csv, QUOTE '')\" \
-         and then .read p.sql against the read-only database."
+pub fn record_install_skip(reason: &str) {
+    *INSTALL_SKIP.lock().unwrap() = Some(format!(
+        "{reason}. The scalar functions (ts_ask, profiler_config, ...) work regardless. \
+         To install the macro layer on this connection, run the script that \
+         profiler_sql() returns."
     ));
 }
 
 nullary_varchar!(ProfilerSettings, || config::settings_json());
 nullary_varchar!(ProfilerSql, || crate::sql_text());
 nullary_varchar!(ProfilerStatus, || {
-    match INSTALL_FAILURE.lock().unwrap().as_ref() {
+    match INSTALL_SKIP.lock().unwrap().as_ref() {
         Some(e) => serde_json::json!({ "macros_installed": false, "detail": e }).to_string(),
         None => serde_json::json!({ "macros_installed": true }).to_string(),
     }

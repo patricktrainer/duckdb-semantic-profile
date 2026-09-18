@@ -92,6 +92,30 @@ LOAD './build/debug/profiler.duckdb_extension';
 SELECT * FROM profile('shipments');
 ```
 
+## Where the macros go
+
+The pipeline is SQL macros, and `CREATE MACRO` is ordinary DDL — on a database
+file it would persist into that file. Loading an extension should not modify
+someone's database, so the macros install automatically **only on an in-memory
+database**, where nothing persists.
+
+To profile a database file, open DuckDB in memory and attach it read-only:
+
+```sql
+LOAD '/abs/path/to/profiler.duckdb_extension';
+ATTACH '/path/to/warehouse.duckdb' AS db (READ_ONLY);
+
+SELECT * FROM profile_cost('db.main.orders', rows := 50);
+SELECT * FROM profile('db.main.orders', rows := 50);
+```
+
+`LOAD` before `ATTACH`, and qualified table names work throughout.
+
+On a file-backed or read-only database the macros are skipped, `LOAD` still
+succeeds, the scalar functions still work, and `profiler_status()` says why. Set
+`PROFILER_INSTALL_MACROS=1` before `LOAD` to install them into that catalog
+anyway, or run the script `profiler_sql()` returns on your own connection.
+
 ## API
 
 **Pipeline** — each takes a table or view name.
@@ -162,13 +186,22 @@ Override with `SELECT profiler_config(key, value)`, or the environment as
 
 | key | default | |
 |---|---|---|
-| `api_key` | — | `TYPESAFE_API_KEY` |
+| `api_key_file` | — | path to a file holding the key |
 | `model` | `jev-latest` | |
 | `cache_path` | `~/.cache/duckdb-profiler/cache.jsonl` | |
 | `offline` | `false` | serve from cache only; a miss is a hard error |
 | `max_requests` | `2000` | per-process cap; exceeding it is an error, not a warning |
 | `concurrency` | `8` | |
 | `timeout_secs` | `60` | |
+
+**The API key is never settable from SQL.** `profiler_config('api_key', ...)` is
+rejected, because a key passed through SQL lands in query logs, `duckdb_queries()`
+and shell history. Supply it as `TYPESAFE_API_KEY` in the environment, or point
+`api_key_file` at a file containing it.
+
+DuckDB Secrets would be the right home for it, but the C extension API exposes no
+secrets interface and secret values read back from SQL are redacted, so an
+extension built this way cannot reach them.
 
 **Caching.** Responses are content-addressed on `sha256(model ‖ state ‖ questions)`
 and appended to a JSONL file. Sampling is ordered by a hash of row content rather
@@ -216,14 +249,7 @@ unflagged rows: 4, 10, 11, 13, 16, 18
 
 - The extension is built against the **unstable** DuckDB C API, so a binary loads
   only into the DuckDB version it was built for (currently v1.5.5).
-- The macro layer is installed into the catalog at load. On a **read-only**
-  database that is not possible; `LOAD` still succeeds, the scalar functions still
-  work, and `profiler_status()` explains how to install the macros by hand:
-  ```sql
-  -- run the text from profiler_sql() with MACRO replaced by TEMP MACRO
-  ```
-- On a writable file-backed database the macros are persisted into that file's
-  catalog, like any other `CREATE MACRO`.
+- Loading the extension never writes to your database. See **Where the macros go**.
 - Sampling uses `ORDER BY hash(row) LIMIT n`, which reads the whole table. For very
   large tables, profile a pre-sampled view.
 - `profile_columns` is re-evaluated by the later stages. That costs no API requests

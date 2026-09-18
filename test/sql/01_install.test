@@ -9,7 +9,9 @@ Catalog Error
 
 require profiler
 
-# The macro layer installs into the catalog at load time.
+# The test runner uses an in-memory database, where catalog entries do not
+# persist, so the macro layer installs automatically. On a database file it is
+# skipped instead -- loading an extension must not write into someone's database.
 query I
 SELECT (json_extract(profiler_status(), '$.macros_installed'))::BOOLEAN;
 ----
@@ -34,9 +36,25 @@ SELECT json_extract(profiler_reset_stats(), '$.requests');
 ----
 0
 
-# The macro layer is retrievable as text, for installing by hand on a
-# read-only database where the catalog cannot be written.
+# The macro layer is retrievable as text, for installing by hand wherever it is
+# not installed automatically.
 query I
 SELECT profiler_sql() LIKE '%CREATE OR REPLACE MACRO profile_report%';
 ----
 true
+
+# The API key is not settable from SQL: that would put it in query logs,
+# duckdb_queries() and shell history. Environment or api_key_file only.
+statement error
+SELECT profiler_config('api_key', 'sk-would-be-logged');
+----
+unknown profiler setting 'api_key'
+
+statement ok
+SELECT profiler_config('api_key_file', 'test/fixtures/no-such-key-file');
+
+# A missing key file is simply no key, not a crash.
+query I
+SELECT json_extract(profiler_settings(), '$.api_key');
+----
+null
