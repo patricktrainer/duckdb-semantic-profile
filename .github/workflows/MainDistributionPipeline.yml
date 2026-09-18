@@ -34,7 +34,7 @@ jobs:
     with:
       duckdb_version: v1.5.5
       ci_tools_version: v1.5-variegata
-      extension_name: profiler
+      extension_name: semantic_profile
       extra_toolchains: rust;python3
       # wasm: this extension has no wasm target -- the template's staticlib
       #   example was dropped, since a multi-module crate cannot be remapped
