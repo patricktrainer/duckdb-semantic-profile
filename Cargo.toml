@@ -3,6 +3,10 @@ name = "semantic_profile"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "Semantic profiling of the values in a DuckDB table: what they mean, not what shape they are"
+repository = "https://github.com/patricktrainer/duckdb-semantic-profile"
+readme = "README.md"
+keywords = ["duckdb", "data-quality", "profiling", "extension"]
 
 [lib]
 crate-type = ["cdylib"]
