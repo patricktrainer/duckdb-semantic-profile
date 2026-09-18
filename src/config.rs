@@ -60,7 +60,10 @@ fn get_usize(key: &str, default: usize) -> usize {
 
 fn get_bool(key: &str, default: bool) -> bool {
     match get(key) {
-        Some(v) => matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Some(v) => matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
         None => default,
     }
 }

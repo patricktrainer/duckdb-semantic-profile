@@ -5,7 +5,7 @@
 require profiler
 
 statement ok
-SELECT profiler_config('cache_path', '/tmp/profiler-test-empty-cache.jsonl');
+SELECT profiler_config('cache_path', 'test/fixtures/no-such-cache.jsonl');
 
 statement ok
 SELECT profiler_config('offline', 'true');
@@ -39,5 +39,10 @@ SELECT ts_ask('state', NULL) IS NULL;
 ----
 true
 
+# Restore the defaults: these settings are process-global and the runner may
+# execute every .test file in one process, in an order we do not control.
 statement ok
 SELECT profiler_config('offline', 'false');
+
+statement ok
+SELECT profiler_config('cache_path', 'test/fixtures/shipments_cache.jsonl');

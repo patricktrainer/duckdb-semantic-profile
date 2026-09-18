@@ -242,7 +242,10 @@ pub fn resolve(pairs: &[(Value, Value)]) -> Vec<Result<String, AskError>> {
                 })
             })
             .collect();
-        handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect()
     });
 
     for (k, r) in results {
@@ -260,7 +263,11 @@ mod tests {
 
     #[test]
     fn body_matches_the_documented_request_shape() {
-        let b = body("jev-latest", &json!("hello"), &json!({"q": {"type": "noul"}}));
+        let b = body(
+            "jev-latest",
+            &json!("hello"),
+            &json!({"q": {"type": "noul"}}),
+        );
         assert_eq!(b["model"], "jev-latest");
         assert_eq!(b["state"], "hello");
         assert_eq!(b["questions"]["q"]["type"], "noul");

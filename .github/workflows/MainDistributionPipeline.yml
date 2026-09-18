@@ -1,5 +1,5 @@
 #
-# This workflow calls the main distribution pipeline from DuckDB to build, test and (optionally) release the extension
+# Builds and tests the extension across the platforms DuckDB distributes for.
 #
 name: Main Extension Distribution Pipeline
 on:
@@ -13,12 +13,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The Rust core: request building, response parsing, cache keying, the budget
+  # cap. These never touch the network, so they need no key and no DuckDB.
+  unit-tests:
+    name: Rust unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+
   duckdb-stable-build:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata
     with:
       duckdb_version: v1.5.5
       ci_tools_version: v1.5-variegata
-      extension_name: rusty_quack
+      extension_name: profiler
       extra_toolchains: rust;python3
-      exclude_archs: 'linux_amd64_musl'
+      # wasm: this extension has no wasm target -- the template's staticlib
+      #   example was dropped, since a multi-module crate cannot be remapped
+      #   through its `mod lib;` shim.
+      # windows_amd64_mingw: the Rust toolchain here targets MSVC, not GNU.
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_mingw'

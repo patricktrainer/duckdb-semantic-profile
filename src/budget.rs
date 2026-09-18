@@ -12,7 +12,15 @@ macro_rules! counters {
     };
 }
 
-counters!(REQUESTS, CACHE_HITS, CACHE_MISSES, RETRIES, ERRORS, INPUT_TOKENS, OUTPUT_TOKENS);
+counters!(
+    REQUESTS,
+    CACHE_HITS,
+    CACHE_MISSES,
+    RETRIES,
+    ERRORS,
+    INPUT_TOKENS,
+    OUTPUT_TOKENS
+);
 
 pub fn bump(c: &AtomicU64, n: u64) {
     c.fetch_add(n, Ordering::Relaxed);

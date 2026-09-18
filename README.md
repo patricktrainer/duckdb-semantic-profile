@@ -74,11 +74,17 @@ SELECT * FROM profile_cost('shipments');   -- dry run, makes no API calls
 Needs Rust, Python 3 and DuckDB **v1.5.5** (the C API build is version-pinned).
 
 ```bash
+git clone --recursive git@github.com:patricktrainer/profiler.git
+# already cloned without --recursive:  git submodule update --init
+
 brew upgrade duckdb        # if you are on an older 1.5.x
 make configure && make debug
-export TYPESAFE_API_KEY=...
+export TYPESAFE_API_KEY=...   # or put it in .env, which is gitignored
 duckdb -unsigned
 ```
+
+`extension-ci-tools` is a submodule; `make configure` needs it, and it also builds
+a venv under `configure/` and downloads a matching DuckDB for the test runner.
 
 ```sql
 LOAD './build/debug/profiler.duckdb_extension';

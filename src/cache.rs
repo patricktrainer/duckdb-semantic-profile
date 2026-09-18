@@ -117,7 +117,10 @@ mod tests {
 
     #[test]
     fn key_tracks_the_model() {
-        assert_ne!(key("m1", &json!(1), &json!(2)), key("m2", &json!(1), &json!(2)));
+        assert_ne!(
+            key("m1", &json!(1), &json!(2)),
+            key("m2", &json!(1), &json!(2))
+        );
     }
 
     #[test]
@@ -129,7 +132,14 @@ mod tests {
         let k = key("jev-latest", &st, &qs);
 
         assert_eq!(get(&path, &k), None);
-        put(&path, &k, "jev-latest", &st, &qs, r#"{"answers":{"q":{"noul":0.9}}}"#);
+        put(
+            &path,
+            &k,
+            "jev-latest",
+            &st,
+            &qs,
+            r#"{"answers":{"q":{"noul":0.9}}}"#,
+        );
         assert!(get(&path, &k).unwrap().contains("0.9"));
 
         // Force a reload from disk to prove the file itself carries the entry.
@@ -140,11 +150,16 @@ mod tests {
 
     #[test]
     fn skips_corrupt_lines() {
-        let dir = std::env::temp_dir().join(format!("profiler-corrupt-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("profiler-corrupt-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cache.jsonl");
-        std::fs::write(&path, "{\"k\":\"aa\",\"response\":{\"ok\":1}}\n{\"k\":\"bb\",\"resp\n").unwrap();
+        std::fs::write(
+            &path,
+            "{\"k\":\"aa\",\"response\":{\"ok\":1}}\n{\"k\":\"bb\",\"resp\n",
+        )
+        .unwrap();
         cache().loaded_from = None;
         assert!(get(&path, "aa").is_some());
         assert!(get(&path, "bb").is_none());
