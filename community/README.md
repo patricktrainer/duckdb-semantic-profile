@@ -24,8 +24,9 @@ LOAD semantic_profile;
 
 ## Keeping it current
 
-`repo.ref` pins a commit — currently the `v0.1.0` tag. Their CI builds exactly
-that tree, so a new release means a new PR bumping `version` and `ref`.
+`repo.ref` pins a commit — currently `82f838a`, the commit tagged `v0.1.0`. Their
+CI builds exactly that tree, so a new release means a new PR bumping `version`
+and `ref`.
 
 `excluded_platforms` matches what this repo's own CI builds. Widen it only after
 verifying the platform actually works.

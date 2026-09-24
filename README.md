@@ -71,7 +71,28 @@ SELECT * FROM sem_cost('shipments');   -- dry run, makes no API calls
 
 ## Install
 
-Needs Rust, Python 3 and DuckDB **v1.5.5** (the C API build is version-pinned).
+The extension is in DuckDB's
+[community extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/semantic_profile)
+repository, so no build is needed. It needs DuckDB **v1.5.5** (the C API build is
+version-pinned).
+
+```bash
+export TYPESAFE_API_KEY=...   # or: SELECT sem_config('api_key_file', '~/.typesafe-key');
+duckdb
+```
+
+```sql
+INSTALL semantic_profile FROM community;
+LOAD semantic_profile;
+SELECT * FROM sem_profile('shipments');
+```
+
+The key is read from the environment or a file, never from SQL, where it would
+end up in query logs and shell history.
+
+### Building from source
+
+Needs Rust, Python 3 and DuckDB **v1.5.5**.
 
 ```bash
 git clone --recursive git@github.com:patricktrainer/duckdb-semantic-profile.git
@@ -102,7 +123,7 @@ database**, where nothing persists.
 To profile a database file, open DuckDB in memory and attach it read-only:
 
 ```sql
-LOAD '/abs/path/to/semantic_profile.duckdb_extension';
+LOAD semantic_profile;
 ATTACH '/path/to/warehouse.duckdb' AS db (READ_ONLY);
 
 SELECT * FROM sem_cost('db.main.orders', rows := 50);
