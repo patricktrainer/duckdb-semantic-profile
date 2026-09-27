@@ -101,11 +101,14 @@ CREATE OR REPLACE MACRO sem_profile(tbl, threshold := 0.7, rows := 100, n := 200
     SELECT * FROM (
         SELECT scope, column_name, probe_id, detail AS finding,
                NULL::BIGINT AS rows_flagged, NULL::DOUBLE AS flag_rate,
-               round(probability, 3) AS max_probability, NULL::VARCHAR[] AS examples
+               round(probability, 3) AS max_probability, NULL::VARCHAR[] AS examples,
+               NULL::BIGINT[] AS example_rows
         FROM sem_column_flags(tbl, n, threshold)
         UNION ALL
+        -- A row finding has no single offending value, so example_rows is its only
+        -- evidence here; pass those ordinals to sem_findings to see the rows.
         SELECT scope, column_name, probe_id, NULL AS finding,
-               rows_flagged, flag_rate, max_probability, examples
+               rows_flagged, flag_rate, max_probability, examples, example_rows
         FROM sem_report(tbl, threshold, rows, n)
     )
     ORDER BY coalesce(rows_flagged, 0) DESC, max_probability DESC;

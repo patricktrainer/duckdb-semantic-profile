@@ -12,20 +12,21 @@ SELECT * FROM sem_profile('shipments');
 ```
 
 ```
-scope   column_name   probe_id                        rows_flagged  examples
-value   shipped_at    sentinel_used_as_value                     4  [9999-12-31, '']
-row     ·             status_timeline_inconsistent               3  ·
-value   customer      placeholder_or_test_value                  2  [Asdf Asdf, Test Company]
-row     ·             geo_inconsistent                           2  ·
-value   notes         placeholder_or_test_value                  2  [lorem ipsum dolor, asdf]
-value   address       operational_note_in_data_field             1  [DO NOT SHIP - see ticket 4412]
-value   email         multiple_values_in_one_field               1  [orders@delta.com; billing@delta.com]
-value   customer      mojibake                                   1  [CafÃ© Lumière SARL]
-column  notes         sensitive_personal_data                    ·  ·
-column  weight        unit_unrecoverable                         ·  ·
+scope   column_name   probe_id                        rows_flagged  examples                               example_rows
+value   shipped_at    sentinel_used_as_value                     4  [9999-12-31, '']                       [13, 12, 3, 20]
+row     ·             status_timeline_inconsistent               3  ·                                      [3, 20, 13]
+value   customer      placeholder_or_test_value                  2  [Asdf Asdf, Test Company]              [9, 19]
+row     ·             geo_inconsistent                           2  ·                                      [17, 11]
+value   notes         placeholder_or_test_value                  2  [lorem ipsum dolor, asdf]              [9, 19]
+value   address       operational_note_in_data_field             1  [DO NOT SHIP - see ticket 4412]        [12]
+value   email         multiple_values_in_one_field               1  [orders@delta.com; billing@delta.com]  [2]
+value   customer      mojibake                                   1  [CafÃ© Lumière SARL]                   [18]
+column  notes         sensitive_personal_data                    ·  ·                                      ·
+column  weight        unit_unrecoverable                         ·  ·                                      ·
 ```
 
-That is real output from `demo/messy.sql` (jev-1.13.0), not an illustration.
+That is real output from `demo/messy.sql` (jev-1.13.0), not an illustration,
+abridged to the findings for the planted defects.
 Not one of those findings moves a single number in `SUMMARIZE`: the types are
 right, the ranges are plausible, nothing is NULL, and no distinct count looks odd.
 
@@ -186,6 +187,17 @@ rows land in `needs_review` and a person decides.
 Every finding carries evidence — `examples` holds the actual offending values,
 `example_rows` their sample ordinals, and `sem_values` / `sem_findings`
 return `row_json` so you can join findings back to your own key.
+
+A row-level finding has no single offending value, so `example_rows` is its
+evidence. Those are positions in the sample, **not** your table's keys: the
+`geo_inconsistent` rows `[17, 11]` above are `id` 5 and 12. Drill in with the
+same arguments you profiled with:
+
+```sql
+SELECT row_id, row_json->>'id' AS id, row_json
+FROM sem_findings('shipments', rows := 20)
+WHERE probe_id = 'geo_inconsistent';
+```
 
 **NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
 "is this a placeholder?" about one invites a yes — exactly backwards, since

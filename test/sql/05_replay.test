@@ -78,6 +78,13 @@ FROM sem_findings('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
 ----
 2
 
+# A row finding has no single value to show, so sem_profile points at the rows.
+query II
+SELECT examples IS NULL, len(example_rows)
+FROM sem_profile('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
+----
+true	2
+
 # Rows 7 and 15 are shipped with no ship date; row 19 is delivered with a
 # 9999-12-31 sentinel standing in for the real one. All three are real.
 query I
