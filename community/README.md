@@ -24,7 +24,7 @@ LOAD semantic_profile;
 
 ## Keeping it current
 
-`repo.ref` pins a commit — currently `82f838a`, the commit tagged `v0.1.0`. Their
+`repo.ref` pins a commit — currently `1f2b836`, the commit tagged `v0.2.0`. Their
 CI builds exactly that tree, so a new release means a new PR bumping `version`
 and `ref`.
 

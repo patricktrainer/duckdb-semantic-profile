@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: patricktrainer/duckdb-semantic-profile
-  ref: 82f838a75246033f3017450438b0d383dfaf8914
+  ref: 1f2b8361de6dd8cb9cee6a64b9f10741f43ab517
 
 docs:
   hello_world: |
