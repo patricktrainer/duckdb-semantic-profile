@@ -39,12 +39,13 @@ CREATE OR REPLACE MACRO sem_column_flags(tbl, n := 200, threshold := 0.7) AS TAB
 
 -- Value- and row-level findings, aggregated per probe.
 --
--- Row findings are grouped by probe AND by the pair of fields the row names as
--- the problem (see sem_row_fields), so one systemic defect reads as one finding
--- with a count -- "status + closed_date: 11 rows" -- rather than as eleven.
--- Two kinds of row judgment are dropped on the way: ones that backed off to
--- `no_conflict` when asked what they were about, and ones whose main field
--- already carries a value finding on that row, which they only restate.
+-- Row findings are grouped by the field they are about (see sem_row_fields),
+-- across probes, so one defect reads as one finding with a count -- "status:
+-- 11 rows" -- rather than as eleven, or as the same rows once per probe that
+-- noticed them. Two kinds of row judgment are dropped on the way: ones that
+-- backed off to `no_conflict` when asked what they were about, and ones whose
+-- main field already carries a value finding on that row, which they only
+-- restate.
 CREATE OR REPLACE MACRO sem_report(
     tbl, threshold := 0.7, rows := 100, n := 200,
     min_relevance := 0.5, max_per_column := 4, max_row_probes := 5, min_type_confidence := 0.6,
@@ -79,15 +80,8 @@ CREATE OR REPLACE MACRO sem_report(
         SELECT DISTINCT row_id, column_name FROM v
         WHERE scope = 'value' AND probability >= threshold
     ),
-    checked AS (
-        SELECT probe_id, count(*) AS rows_checked FROM v WHERE scope = 'row' GROUP BY probe_id
-    ),
     rf AS (
-        SELECT f.*,
-               array_to_string(list_sort(list_filter([f.field_1, f.field_2], lambda x: x IS NOT NULL)), ' + ') AS fields,
-               concat_ws('; ',
-                   f.field_1 || '=' || left(coalesce(json_extract_string(f.row_json, sem_path(f.field_1)), 'NULL'), 60),
-                   f.field_2 || '=' || left(coalesce(json_extract_string(f.row_json, sem_path(f.field_2)), 'NULL'), 60)) AS evidence
+        SELECT f.*
         FROM sem_row_fields(tbl, threshold, rows, n, min_relevance, max_per_column, max_row_probes,
                             min_type_confidence, review_floor, review_lift) f
         WHERE (f.flagged OR f.to_review)
@@ -95,21 +89,54 @@ CREATE OR REPLACE MACRO sem_report(
           AND NOT EXISTS (SELECT 1 FROM flagged_cells c
                           WHERE c.row_id = f.row_id AND c.column_name = f.field_1)
     ),
+    -- Each judgment names two fields, and different rows with the same defect
+    -- do not always name the same pair (`status + closed_date` on one row,
+    -- `status + notes` on the next). Anchor each judgment on whichever of its
+    -- two fields the report as a whole mentions most, which pulls those
+    -- together without chaining unrelated pairs. The field named as most
+    -- responsible counts double, so ties go to the likelier culprit.
+    mentions AS (
+        SELECT field, sum(w) AS n
+        FROM (SELECT field_1 AS field, 2 AS w FROM rf
+              UNION ALL SELECT field_2, 1 FROM rf WHERE field_2 IS NOT NULL)
+        GROUP BY field
+    ),
+    anchored AS (
+        SELECT rf.*, m.field AS anchor
+        FROM rf JOIN mentions m ON m.field IN (rf.field_1, rf.field_2)
+        QUALIFY row_number() OVER (PARTITION BY rf.row_id, rf.probe_id ORDER BY m.n DESC, m.field) = 1
+    ),
+    -- One entry per row and anchor, however many probes noticed it; the most
+    -- confident judgment supplies the evidence.
+    per_row AS (
+        SELECT row_id, anchor,
+               max(probability)                                        AS probability,
+               bool_or(flagged)                                        AS flagged,
+               list(DISTINCT probe_id ORDER BY probe_id)               AS probes,
+               arg_max(anchor || '=' || left(coalesce(json_extract_string(row_json, sem_path(anchor)), 'NULL'), 60)
+                       || coalesce('; ' || other || '=' || left(coalesce(json_extract_string(row_json, sem_path(other)), 'NULL'), 60), ''),
+                       probability)                                    AS evidence
+        FROM (SELECT *, CASE WHEN anchor = field_1 THEN field_2 ELSE field_1 END AS other FROM anchored)
+        GROUP BY row_id, anchor
+    ),
+    sampled AS (
+        SELECT count(DISTINCT row_id) AS rows_checked FROM v WHERE scope = 'row'
+    ),
     row_findings AS (
         SELECT 'row'                                                      AS scope,
-               rf.fields                                                  AS column_name,
-               rf.probe_id,
-               any_value(ck.rows_checked)                                 AS rows_checked,
+               anchor                                                     AS column_name,
+               array_to_string(list_sort(list_distinct(flatten(list(probes)))), ', ') AS probe_id,
+               any_value(s.rows_checked)                                  AS rows_checked,
                count(*) FILTER (flagged)                                  AS rows_flagged,
-               round(count(*) FILTER (flagged) / any_value(ck.rows_checked)::DOUBLE, 4) AS flag_rate,
+               round(count(*) FILTER (flagged) / any_value(s.rows_checked)::DOUBLE, 4) AS flag_rate,
                NULL::BIGINT                                               AS needs_review,
                round(max(probability), 3)                                 AS max_probability,
-               list(DISTINCT evidence)[1:3]                               AS examples,
+               list(evidence ORDER BY probability DESC)[1:3]             AS examples,
                list(row_id ORDER BY probability DESC) FILTER (flagged)[1:5]     AS example_rows,
                count(*) FILTER (NOT flagged)                              AS rows_to_review,
                list(row_id ORDER BY probability DESC) FILTER (NOT flagged)[1:5] AS review_rows
-        FROM rf JOIN checked ck USING (probe_id)
-        GROUP BY rf.probe_id, rf.fields
+        FROM per_row, sampled s
+        GROUP BY anchor
     )
     SELECT * FROM (SELECT * FROM value_findings UNION ALL SELECT * FROM row_findings)
     ORDER BY rows_flagged + rows_to_review DESC, max_probability DESC;
