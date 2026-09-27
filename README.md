@@ -12,17 +12,18 @@ SELECT * FROM sem_profile('shipments');
 ```
 
 ```
-scope   column_name   probe_id                        rows_flagged  examples                               example_rows
-value   shipped_at    sentinel_used_as_value                     4  [9999-12-31, '']                       [13, 12, 3, 20]
-row     ·             status_timeline_inconsistent               3  ·                                      [3, 20, 13]
-value   customer      placeholder_or_test_value                  2  [Asdf Asdf, Test Company]              [9, 19]
-row     ·             geo_inconsistent                           2  ·                                      [17, 11]
-value   notes         placeholder_or_test_value                  2  [lorem ipsum dolor, asdf]              [9, 19]
-value   address       operational_note_in_data_field             1  [DO NOT SHIP - see ticket 4412]        [12]
-value   email         multiple_values_in_one_field               1  [orders@delta.com; billing@delta.com]  [2]
-value   customer      mojibake                                   1  [CafÃ© Lumière SARL]                   [18]
-column  notes         sensitive_personal_data                    ·  ·                                      ·
-column  weight        unit_unrecoverable                         ·  ·                                      ·
+scope   column_name   probe_id                                                      rows_flagged  examples                                                                        example_rows
+value   shipped_at    sentinel_used_as_value                                        4             [9999-12-31, '']                                                                [13, 12, 3, 20]
+value   customer      placeholder_or_test_value                                     2             [Test Company, Asdf Asdf]                                                       [9, 19]
+value   notes         placeholder_or_test_value                                     2             [lorem ipsum dolor, asdf]                                                       [9, 19]
+row     postal_code   geo_inconsistent, internally_contradictory, row_is_test_data  2             ['postal_code=SW1A 1AA; country=US', 'postal_code=EC1A 1BB; country=US']        [17, 11]
+row     status        internally_contradictory, status_timeline_inconsistent        2             ['status=shipped; shipped_at=', 'status=shipped; notes=awaiting carrier scan']  [3, 20]
+value   email         multiple_values_in_one_field                                  1             [orders@delta.com; billing@delta.com]                                           [2]
+value   address       operational_note_in_data_field                                1             [DO NOT SHIP - see ticket 4412]                                                 [12]
+value   customer      mojibake                                                      1             [CafÃ© Lumière SARL]                                                            [18]
+row     category      category_product_mismatch, internally_contradictory           1             ['category=Garden Tools; product_name=Blue Cotton T-Shirt']                     [1]
+column  notes         sensitive_personal_data                                       ·             ·                                                                               ·
+column  weight        unit_unrecoverable                                            ·             ·                                                                               ·
 ```
 
 That is real output from `demo/messy.sql` (jev-1.13.0), not an illustration,
@@ -48,7 +49,8 @@ which returns calibrated typed answers and probabilities rather than free text.
 
 ## How it adapts to the table
 
-Three steps, and the middle one is what makes it adapt rather than run a checklist.
+Four steps. The second is what makes it adapt rather than run a checklist; the
+fourth is what makes a row-level finding say what is wrong.
 
 1. **Discover** — one request per column. What does this column actually hold,
    judged from its values, its neighbours and a few whole rows? Yields a semantic
@@ -60,11 +62,20 @@ Three steps, and the middle one is what makes it adapt rather than run a checkli
    `sem_probes()` shows you this before you pay for it.
 3. **Execute** — one request per row. The state is the whole row; the questions are
    every selected value probe across every column *plus* every row-level coherence
-   check. Since state is what costs tokens and answers are independent, the
-   cross-column checks ride along essentially free.
+   check. Answers are independent, so the cross-column checks add only their own
+   question text to a request that is being sent anyway.
+4. **Attribute** — one small request per row that a row-level check scored 0.5 or
+   above. Which single field is most responsible, as a choice over the row's own
+   columns plus `no_conflict`? The top two fields name the problem. A check that
+   answers `no_conflict` when made to point at something is dropped, as is one
+   whose field already has a value finding on that row. What remains is grouped
+   by field, so a defect repeated across 11 rows reads as one finding, not 11.
+   `sem_row_fields()` shows these answers.
 
-Cost is therefore `2 × columns + rows`, not `columns × rows`. A 20-column table at
-500 sampled rows is ~540 requests.
+Cost is therefore `2 × columns + rows` plus the attribution requests, not
+`columns × rows`. A 20-column table at 500 sampled rows is ~540 requests, plus
+one per row a row-level check suspects; on the datasets tried so far that has
+been 3-24% of `rows × 5`, which `sem_cost()` reports as a ceiling.
 
 ```sql
 SELECT * FROM sem_cost('shipments');   -- dry run, makes no API calls
@@ -144,13 +155,14 @@ anyway, or run the script `sem_sql()` returns on your own connection.
 
 | | |
 |---|---|
-| `profile(tbl, threshold := 0.7, rows := 100, n := 200)` | every finding, column- and value-level |
+| `sem_profile(tbl, threshold := 0.7, rows := 100, n := 200)` | every finding, column-, value- and row-level |
 | `sem_columns(tbl, n := 200)` | what each column actually is |
 | `sem_probes(tbl, …)` | which checks were chosen, and their relevance |
 | `sem_values(tbl, rows := 100, …)` | raw per-row judgments, long form |
-| `sem_report(tbl, threshold := 0.7, …)` | findings aggregated per probe, with evidence |
+| `sem_report(tbl, threshold := 0.7, …)` | findings aggregated per probe (value) or per field (row), with evidence |
+| `sem_row_fields(tbl, …)` | for each suspect row, the fields a row-level check blames |
 | `sem_findings(tbl, …)` | the individual flagged rows |
-| `sem_cost(tbl, …)` | dry run: request and token estimate |
+| `sem_cost(tbl, …)` | dry run: request and token estimate, attribution ceiling |
 | `sem_catalog()` | the probe catalog |
 
 **Primitives** — TypeSafe judgments as plain SQL, useful on their own.
@@ -188,15 +200,23 @@ Every finding carries evidence — `examples` holds the actual offending values,
 `example_rows` their sample ordinals, and `sem_values` / `sem_findings`
 return `row_json` so you can join findings back to your own key.
 
-A row-level finding has no single offending value, so `example_rows` is its
-evidence. Those are positions in the sample, **not** your table's keys: the
-`geo_inconsistent` rows `[17, 11]` above are `id` 5 and 12. Drill in with the
-same arguments you profiled with:
+A row-level finding has no single offending value, so it names the field instead:
+`column_name` is the field most blamed, `examples` shows it with the field it
+conflicts with (`postal_code=SW1A 1AA; country=US`), and `probe_id` lists every
+check that noticed. Rows it is less sure of — scored from 0.5 up to `threshold`,
+but at least 0.3 above what that check typically scored — are listed separately
+as `rows_to_review` / `review_rows`. On NYC 311 data that is how a real defect
+surfaced: 11 requests left `Pending` with closed dates, scored ~0.6 against a
+typical 0.1, and never reached 0.7.
+
+Row ids are positions in the sample, **not** your table's keys: the
+`postal_code` rows `[17, 11]` above are `id` 5 and 12. Drill in with the same
+arguments you profiled with:
 
 ```sql
-SELECT row_id, row_json->>'id' AS id, row_json
-FROM sem_findings('shipments', rows := 20)
-WHERE probe_id = 'geo_inconsistent';
+SELECT row_id, row_json->>'id' AS id, probe_id, field_1, field_2, retracted
+FROM sem_row_fields('shipments', rows := 20)
+WHERE row_id IN (17, 11);
 ```
 
 **NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
