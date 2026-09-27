@@ -1,7 +1,7 @@
 extension:
   name: semantic_profile
   description: Profiles what the values in a table mean rather than what shape they are — semantic type per column, PII and format drift, and cross-column contradictions
-  version: 0.1.0
+  version: 0.2.0
   language: Rust
   build: cargo
   license: MIT

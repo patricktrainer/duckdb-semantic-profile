@@ -1,6 +1,6 @@
 [package]
 name = "semantic_profile"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Semantic profiling of the values in a DuckDB table: what they mean, not what shape they are"
