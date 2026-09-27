@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-09-27
 
 Row-level findings now say what is wrong with a row, not just that something is.
 
