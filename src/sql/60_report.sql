@@ -173,9 +173,18 @@ CREATE OR REPLACE MACRO sem_cost(tbl, rows := 100, n := 200, max_row_probes := 5
            -- sampled row under every row probe. Runs so far used 3-24% of it.
            execution_requests * max_row_probes AS attribution_requests_max,
            round(avg_row_bytes) AS avg_row_bytes,
-           -- Rough, and stated as such: state dominates, ~4 bytes per token.
-           round((discovery_requests + selection_requests) * 4000 / 4
-                 + execution_requests * (avg_row_bytes + 6000) / 4) AS approx_input_tokens,
+           -- Calibrated on the usage recorded in four real runs' caches (5 to 38
+           -- columns), where it came out at 103-123% of actual. The questions,
+           -- not the row, dominate: an execution request carries ~3 value probes
+           -- per column plus the row probes at ~330 bytes each, a discovery
+           -- request a fixed ~7.5 KB of questions plus sample values and example
+           -- rows (~4.3x a row), a selection request ~6 KB. This JSON runs ~3
+           -- bytes per token. Step 4 is excluded, as in total_requests; each of
+           -- its requests is ~1.2 tokens per row byte plus ~400.
+           round((discovery_requests * (7500 + 4.3 * avg_row_bytes)
+                  + selection_requests * 6000
+                  + execution_requests * (avg_row_bytes + (3 * n_columns + max_row_probes) * 330)) / 3)
+               AS approx_input_tokens,
            'total_requests excludes step 4, which adds at most attribution_requests_max small requests; '
            || 'cached requests cost nothing; re-running with a different threshold costs nothing' AS note
     FROM e;
