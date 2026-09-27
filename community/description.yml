@@ -81,7 +81,7 @@ docs:
     4. **Attribute** — one small request per row a cross-column check suspects:
        which field is most responsible? Checks that back off when made to point
        at something are dropped, and the rest are grouped by field, so a defect
-       repeated across 11 rows reads as one finding.
+       repeated across rows usually reads as one finding.
 
     Cost is `2 × columns + rows`, plus the attribution requests, not
     `columns × rows`. A 20-column table at 500 sampled rows is about 540

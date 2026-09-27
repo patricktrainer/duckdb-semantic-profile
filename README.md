@@ -69,8 +69,9 @@ fourth is what makes a row-level finding say what is wrong.
    columns plus `no_conflict`? The top two fields name the problem. A check that
    answers `no_conflict` when made to point at something is dropped, as is one
    whose field already has a value finding on that row. What remains is grouped
-   by field, so a defect repeated across 11 rows reads as one finding, not 11.
-   `sem_row_fields()` shows these answers.
+   by field, so a defect repeated across rows usually reads as one finding: on
+   NYC 311 data, 11 rows of it came back as one. It can split when the model
+   blames different fields on different rows. `sem_row_fields()` shows the answers.
 
 Cost is therefore `2 × columns + rows` plus the attribution requests, not
 `columns × rows`. A 20-column table at 500 sampled rows is ~540 requests, plus
@@ -294,9 +295,17 @@ own `id`.
 
 ```
 12/12 planted defects detected at threshold 0.7
-bare numbers (26.4, 35.2): up to 0.57   values stating kg: up to 0.02
-unflagged rows: 4, 10, 11, 13, 16, 18
+country/postcode contradict    [5, 12]  reported  row findings: row:postal_code
+shipped with no ship date      [7, 15]  reported  row findings: row:notes, row:status
+product/category mismatch      [6]      reported  row findings: row:category
+bare numbers (26.4, 35.2): up to 0.6   values stating kg: up to 0.02
+unflagged rows: 1, 2, 4, 10, 11, 13, 16, 18
 ```
+
+It also checks that dropping and grouping row findings never loses a planted
+defect. On that run the "shipped with no ship date" rows came back as two
+findings rather than one: row 7 blamed `notes` ("awaiting carrier scan" beside
+`status = shipped`), row 15 blamed `status`.
 
 ## Notes and limits
 

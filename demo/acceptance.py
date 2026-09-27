@@ -1,8 +1,8 @@
 """Acceptance: does the semantic_profile independently find the defects planted in
 demo/messy.sql? Joins findings back to the table's own id, not the sample ordinal."""
-import sys, duckdb
+import os, sys, duckdb
 
-EXT = "./build/debug/semantic_profile.duckdb_extension"
+EXT = os.environ.get("EXT", "./build/debug/semantic_profile.duckdb_extension")
 con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
 con.execute(f"LOAD '{EXT}'")
 con.execute(open("demo/messy.sql").read())
@@ -41,6 +41,31 @@ for label, rid, pred in EXPECT:
 print("-" * 62)
 print(f"{found}/{len(EXPECT)} planted defects detected at threshold 0.7")
 
+# The report drops row judgments that back off or that restate a value finding,
+# then groups the rest by field. Neither step may lose a defect: every planted
+# cross-column row must still appear in sem_report, as a row finding or as the
+# value finding it was folded into. Whether a defect's rows land in ONE finding
+# depends on which fields the model blames on each row, so that is reported
+# here but not required.
+print("\nCross-column defects in sem_report:")
+report = con.sql("""
+  WITH ids AS (SELECT row_id, json_extract(row_json,'$.id')::INT AS id FROM sem_sample('shipments', 20)),
+  r AS (SELECT scope, column_name,
+               unnest(list_concat(coalesce(example_rows, []), coalesce(review_rows, []))) AS row_id
+        FROM sem_report('shipments', threshold:=0.7, rows:=20))
+  SELECT scope, column_name, list(DISTINCT id ORDER BY id)
+  FROM r JOIN ids USING (row_id) GROUP BY ALL""").fetchall()
+covered = 0
+cross = [("country/postcode contradict", {5, 12}),
+         ("shipped with no ship date", {7, 15}),
+         ("product/category mismatch", {6})]
+for label, planted in cross:
+    missing = {i for i in planted if not any(i in ids for _, _, ids in report)}
+    spans = sorted({f"{sc}:{col}" for sc, col, ids in report if sc == 'row' and planted & set(ids)})
+    covered += not missing
+    print(f"  {label:30} {sorted(planted)}  {'reported' if not missing else f'LOST {sorted(missing)}'}"
+          f"  row findings: {', '.join(spans) or 'none (folded into value findings)'}")
+
 # Ambiguous-unit rows are the interesting case: the model separates them cleanly
 # (0.5-0.6 vs 0.02 for values that state their unit) but does not assert, because
 # the unit is arguably inferable from the column. That is the needs_review band
@@ -59,4 +84,4 @@ print("  separation holds")
 print("\nUnflagged rows (should be the clean ones):")
 print(con.sql("SELECT id FROM shipments WHERE id NOT IN (SELECT id FROM f) ORDER BY id").fetchall())
 print("\nrequests used:", con.sql("SELECT json_extract(sem_stats(),'$.requests')").fetchone()[0])
-sys.exit(0 if found >= 10 else 1)
+sys.exit(0 if found >= 10 and covered == len(cross) else 1)
