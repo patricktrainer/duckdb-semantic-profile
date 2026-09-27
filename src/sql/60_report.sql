@@ -152,7 +152,7 @@ CREATE OR REPLACE MACRO sem_findings(
     ORDER BY probability DESC, row_id;
 
 -- Dry run. Makes no API calls, so this is safe to run before committing spend.
-CREATE OR REPLACE MACRO sem_cost(tbl, rows := 100, n := 200) AS TABLE
+CREATE OR REPLACE MACRO sem_cost(tbl, rows := 100, n := 200, max_row_probes := 5) AS TABLE
     WITH s AS (SELECT count(*) AS n_columns FROM sem_schema(tbl)),
     t AS (SELECT count(*) AS table_rows FROM query_table(tbl)),
     b AS (SELECT avg(length(row_json)) AS avg_row_bytes FROM sem_sample(tbl, least(50, n))),
@@ -168,11 +168,16 @@ CREATE OR REPLACE MACRO sem_cost(tbl, rows := 100, n := 200) AS TABLE
     SELECT n_columns, table_rows, rows_to_probe,
            discovery_requests, selection_requests, execution_requests,
            discovery_requests + selection_requests + execution_requests AS total_requests,
+           -- Step 4 asks only about rows a row probe scored >= 0.5, which is
+           -- unknowable before the run, so this is a ceiling, not a count: every
+           -- sampled row under every row probe. Runs so far used 3-24% of it.
+           execution_requests * max_row_probes AS attribution_requests_max,
            round(avg_row_bytes) AS avg_row_bytes,
            -- Rough, and stated as such: state dominates, ~4 bytes per token.
            round((discovery_requests + selection_requests) * 4000 / 4
                  + execution_requests * (avg_row_bytes + 6000) / 4) AS approx_input_tokens,
-           'cached requests cost nothing; re-running with a different threshold costs nothing' AS note
+           'total_requests excludes step 4, which adds at most attribution_requests_max small requests; '
+           || 'cached requests cost nothing; re-running with a different threshold costs nothing' AS note
     FROM e;
 
 -- The one-liner: everything worth looking at, column-level and value-level.

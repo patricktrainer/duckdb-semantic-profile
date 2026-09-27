@@ -22,6 +22,13 @@ SELECT total_requests FROM sem_cost('t', rows:=10);
 ----
 17
 
+# Attribution (step 4) depends on scores that do not exist yet, so the dry run
+# gives its ceiling: every probed row under every row probe.
+query I
+SELECT attribution_requests_max FROM sem_cost('t', rows:=10);
+----
+50
+
 # rows_to_probe is capped by the real table size, not by the argument.
 query I
 SELECT rows_to_probe FROM sem_cost('t', rows:=10000);
