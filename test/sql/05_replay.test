@@ -78,12 +78,42 @@ FROM sem_findings('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
 ----
 2
 
-# A row finding has no single value to show, so sem_profile points at the rows.
-query II
-SELECT examples IS NULL, len(example_rows)
-FROM sem_profile('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
+# A row finding names the fields it is about and shows their values, and one
+# defect across several rows reads as one finding: rows 5 and 12 both pair a US
+# country with a UK postcode.
+query III
+SELECT column_name, rows_flagged, list_contains(examples, 'country=US; postal_code=SW1A 1AA')
+FROM sem_report('shipments', rows:=20) WHERE probe_id = 'geo_inconsistent';
 ----
-true	2
+country + postal_code	2	true
+
+# Made to point at a field, a probe can back off. Row 6 (a t-shirt filed under
+# garden tools) scored 0.81 as test data, then answered no_conflict.
+query I
+SELECT retracted FROM sem_row_fields('shipments', rows:=20)
+WHERE probe_id = 'row_is_test_data' AND (row_json->>'id') = '6';
+----
+true
+
+# A row finding whose main field already has a value finding on that row only
+# restates it. Row 19's timeline problem IS its 9999-12-31 sentinel, which is
+# reported against shipped_at, so the timeline finding keeps rows 7 and 15 only.
+query I
+SELECT sum(rows_flagged) FROM sem_report('shipments', rows:=20)
+WHERE probe_id = 'status_timeline_inconsistent';
+----
+2
+
+# Borderline row judgments are surfaced only when they stand clear of how that
+# check scored everything else. internally_contradictory typically scores ~0.16,
+# so its 0.5-0.7 rows are listed; row_is_test_data typically scores ~0.55, so a
+# borderline score from it says nothing and none are.
+query II
+SELECT probe_id, sum(rows_to_review) FROM sem_report('shipments', rows:=20)
+WHERE probe_id IN ('internally_contradictory', 'row_is_test_data') GROUP BY probe_id ORDER BY probe_id;
+----
+internally_contradictory	2
+row_is_test_data	0
 
 # Rows 7 and 15 are shipped with no ship date; row 19 is delivered with a
 # 9999-12-31 sentinel standing in for the real one. All three are real.

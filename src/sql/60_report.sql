@@ -38,29 +38,81 @@ CREATE OR REPLACE MACRO sem_column_flags(tbl, n := 200, threshold := 0.7) AS TAB
     ORDER BY probability DESC;
 
 -- Value- and row-level findings, aggregated per probe.
+--
+-- Row findings are grouped by probe AND by the pair of fields the row names as
+-- the problem (see sem_row_fields), so one systemic defect reads as one finding
+-- with a count -- "status + closed_date: 11 rows" -- rather than as eleven.
+-- Two kinds of row judgment are dropped on the way: ones that backed off to
+-- `no_conflict` when asked what they were about, and ones whose main field
+-- already carries a value finding on that row, which they only restate.
 CREATE OR REPLACE MACRO sem_report(
     tbl, threshold := 0.7, rows := 100, n := 200,
-    min_relevance := 0.5, max_per_column := 4, max_row_probes := 5, min_type_confidence := 0.6
+    min_relevance := 0.5, max_per_column := 4, max_row_probes := 5, min_type_confidence := 0.6,
+    review_floor := 0.5, review_lift := 0.3
 ) AS TABLE
     WITH v AS (
         SELECT * FROM sem_values(tbl, rows, n, min_relevance, max_per_column, max_row_probes, min_type_confidence)
+    ),
+    value_findings AS (
+        SELECT scope,
+               column_name,
+               probe_id,
+               count(*)                                                   AS rows_checked,
+               count(*) FILTER (probability >= threshold)                 AS rows_flagged,
+               round(count(*) FILTER (probability >= threshold) / count(*)::DOUBLE, 4) AS flag_rate,
+               -- Calibrated uncertainty is a result, not a failure: these are the
+               -- cases worth a person's attention rather than an automated verdict.
+               count(*) FILTER (probability BETWEEN 0.4 AND 0.6)          AS needs_review,
+               round(max(probability), 3)                                 AS max_probability,
+               list(DISTINCT value) FILTER (probability >= threshold AND value IS NOT NULL)[1:3] AS examples,
+               list(row_id ORDER BY probability DESC) FILTER (probability >= threshold)[1:5]     AS example_rows,
+               -- Borderline *value* judgments are not surfaced: on real data they
+               -- were mostly a value already flagged by a sibling probe, or noise.
+               0::BIGINT                                                  AS rows_to_review,
+               NULL::BIGINT[]                                             AS review_rows
+        FROM v
+        WHERE scope = 'value'
+        GROUP BY scope, column_name, probe_id
+        HAVING count(*) FILTER (probability >= threshold) > 0
+    ),
+    flagged_cells AS (
+        SELECT DISTINCT row_id, column_name FROM v
+        WHERE scope = 'value' AND probability >= threshold
+    ),
+    checked AS (
+        SELECT probe_id, count(*) AS rows_checked FROM v WHERE scope = 'row' GROUP BY probe_id
+    ),
+    rf AS (
+        SELECT f.*,
+               array_to_string(list_sort(list_filter([f.field_1, f.field_2], lambda x: x IS NOT NULL)), ' + ') AS fields,
+               concat_ws('; ',
+                   f.field_1 || '=' || left(coalesce(json_extract_string(f.row_json, sem_path(f.field_1)), 'NULL'), 60),
+                   f.field_2 || '=' || left(coalesce(json_extract_string(f.row_json, sem_path(f.field_2)), 'NULL'), 60)) AS evidence
+        FROM sem_row_fields(tbl, threshold, rows, n, min_relevance, max_per_column, max_row_probes,
+                            min_type_confidence, review_floor, review_lift) f
+        WHERE (f.flagged OR f.to_review)
+          AND NOT f.retracted
+          AND NOT EXISTS (SELECT 1 FROM flagged_cells c
+                          WHERE c.row_id = f.row_id AND c.column_name = f.field_1)
+    ),
+    row_findings AS (
+        SELECT 'row'                                                      AS scope,
+               rf.fields                                                  AS column_name,
+               rf.probe_id,
+               any_value(ck.rows_checked)                                 AS rows_checked,
+               count(*) FILTER (flagged)                                  AS rows_flagged,
+               round(count(*) FILTER (flagged) / any_value(ck.rows_checked)::DOUBLE, 4) AS flag_rate,
+               NULL::BIGINT                                               AS needs_review,
+               round(max(probability), 3)                                 AS max_probability,
+               list(DISTINCT evidence)[1:3]                               AS examples,
+               list(row_id ORDER BY probability DESC) FILTER (flagged)[1:5]     AS example_rows,
+               count(*) FILTER (NOT flagged)                              AS rows_to_review,
+               list(row_id ORDER BY probability DESC) FILTER (NOT flagged)[1:5] AS review_rows
+        FROM rf JOIN checked ck USING (probe_id)
+        GROUP BY rf.probe_id, rf.fields
     )
-    SELECT scope,
-           column_name,
-           probe_id,
-           count(*)                                                   AS rows_checked,
-           count(*) FILTER (probability >= threshold)                 AS rows_flagged,
-           round(count(*) FILTER (probability >= threshold) / count(*)::DOUBLE, 4) AS flag_rate,
-           -- Calibrated uncertainty is a result, not a failure: these are the
-           -- cases worth a person's attention rather than an automated verdict.
-           count(*) FILTER (probability BETWEEN 0.4 AND 0.6)          AS needs_review,
-           round(max(probability), 3)                                 AS max_probability,
-           list(DISTINCT value) FILTER (probability >= threshold AND value IS NOT NULL)[1:3] AS examples,
-           list(row_id ORDER BY probability DESC) FILTER (probability >= threshold)[1:5]     AS example_rows
-    FROM v
-    GROUP BY scope, column_name, probe_id
-    HAVING count(*) FILTER (probability >= threshold) > 0
-    ORDER BY rows_flagged DESC, max_probability DESC;
+    SELECT * FROM (SELECT * FROM value_findings UNION ALL SELECT * FROM row_findings)
+    ORDER BY rows_flagged + rows_to_review DESC, max_probability DESC;
 
 -- Individual flagged rows, for drilling into a finding.
 CREATE OR REPLACE MACRO sem_findings(
@@ -102,13 +154,16 @@ CREATE OR REPLACE MACRO sem_profile(tbl, threshold := 0.7, rows := 100, n := 200
         SELECT scope, column_name, probe_id, detail AS finding,
                NULL::BIGINT AS rows_flagged, NULL::DOUBLE AS flag_rate,
                round(probability, 3) AS max_probability, NULL::VARCHAR[] AS examples,
-               NULL::BIGINT[] AS example_rows
+               NULL::BIGINT[] AS example_rows, NULL::BIGINT AS rows_to_review, NULL::BIGINT[] AS review_rows
         FROM sem_column_flags(tbl, n, threshold)
         UNION ALL
-        -- A row finding has no single offending value, so example_rows is its only
-        -- evidence here; pass those ordinals to sem_findings to see the rows.
-        SELECT scope, column_name, probe_id, NULL AS finding,
-               rows_flagged, flag_rate, max_probability, examples, example_rows
+        -- For a row finding, column_name is the pair of fields it is about and
+        -- examples shows their values; sem_row_fields has the rows in full.
+        SELECT scope, column_name, probe_id,
+               CASE WHEN rows_flagged = 0
+                    THEN 'below threshold, but these rows stand out from the rest; review_rows lists them' END AS finding,
+               rows_flagged, flag_rate, max_probability, examples, example_rows,
+               nullif(rows_to_review, 0), nullif(review_rows, [])
         FROM sem_report(tbl, threshold, rows, n)
     )
-    ORDER BY coalesce(rows_flagged, 0) DESC, max_probability DESC;
+    ORDER BY coalesce(rows_flagged, 0) + coalesce(rows_to_review, 0) DESC, max_probability DESC;
