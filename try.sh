@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Open a DuckDB shell with the semantic_profile loaded and the demo table ready.
 #
-# The extension is pinned to DuckDB v1.5.5 by the unstable C API, so this uses the
+# The extension is pinned to DuckDB v1.5.6 by the unstable C API, so this uses the
 # system duckdb when it is that version, and otherwise falls back to a CLI in
 # build/cli (see README).
 set -euo pipefail
@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 
 [ -f .env ] && { set -a; . ./.env; set +a; }
 
-NEED=v1.5.5
+NEED=v1.5.6
 if command -v duckdb >/dev/null && duckdb --version | grep -q "$NEED"; then
     CLI=duckdb
 elif [ -x build/cli/duckdb ]; then

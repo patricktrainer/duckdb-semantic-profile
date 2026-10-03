@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Built against DuckDB v1.5.6 (duckdb-rs 1.10506.0). The C API build is
+  version-pinned, so this binary loads only into v1.5.6.
+
 ## 0.2.0 — 2026-09-27
 
 Row-level findings now say what is wrong with a row, not just that something is.
