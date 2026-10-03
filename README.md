@@ -86,7 +86,7 @@ SELECT * FROM sem_cost('shipments');   -- dry run, makes no API calls
 
 The extension is in DuckDB's
 [community extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/semantic_profile)
-repository, so no build is needed. It needs DuckDB **v1.5.5** (the C API build is
+repository, so no build is needed. It needs DuckDB **v1.5.6** (the C API build is
 version-pinned).
 
 ```bash
@@ -105,7 +105,7 @@ end up in query logs and shell history.
 
 ### Building from source
 
-Needs Rust, Python 3 and DuckDB **v1.5.5**.
+Needs Rust, Python 3 and DuckDB **v1.5.6**.
 
 ```bash
 git clone --recursive git@github.com:patricktrainer/duckdb-semantic-profile.git
@@ -310,7 +310,7 @@ findings rather than one: row 7 blamed `notes` ("awaiting carrier scan" beside
 ## Notes and limits
 
 - The extension is built against the **unstable** DuckDB C API, so a binary loads
-  only into the DuckDB version it was built for (currently v1.5.5).
+  only into the DuckDB version it was built for (currently v1.5.6).
 - Loading the extension never writes to your database. See **Where the macros go**.
 - Sampling uses `ORDER BY hash(row) LIMIT n`, which reads the whole table. For very
   large tables, profile a pre-sampled view.
