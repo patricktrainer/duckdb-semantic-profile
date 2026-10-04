@@ -95,7 +95,8 @@ SELECT * FROM sem_profile('shipments', rows:=20, key:='nope');
 ----
 key: no column `nope` in shipments
 
-# Without a usable key, resolution comes back NULL rather than guessing.
+# Without a primary key or an explicit key (a view, an unkeyed table),
+# resolution comes back NULL rather than guessing.
 statement ok
 CREATE TABLE composite (a INTEGER, b INTEGER, PRIMARY KEY (a, b));
 
@@ -105,11 +106,153 @@ CREATE TABLE unkeyed (a INTEGER);
 statement ok
 CREATE VIEW shipments_view AS SELECT * FROM shipments;
 
-query IIII
-SELECT sem_key('composite', NULL), sem_key('unkeyed', NULL), sem_key('shipments_view', NULL),
-       sem_key('unkeyed', 'a');
+query III
+SELECT sem_key_columns('unkeyed'), sem_key_columns('shipments_view'), sem_key_columns('unkeyed', 'a');
 ----
-NULL	NULL	NULL	a
+NULL	NULL	[a]
+
+# Composite keys retain typed components, and explicit names are resolved using
+# SQL's case-insensitive identifier rules.
+query III
+SELECT sem_key_columns('composite'), sem_key_columns('shipments', ['ID', 'order_ref']),
+       sem_record_key('{"a":12,"b":3}', sem_key_columns('composite'));
+----
+[a, b]	[id, order_ref]	{"a":12,"b":3}
+
+query I
+SELECT example_keys FROM sem_report('shipments', rows:=20, key:=['id', 'order_ref'])
+WHERE scope = 'row' AND column_name = 'postal_code';
+----
+['{"id":5,"order_ref":"ORD-1005"}', '{"id":12,"order_ref":"ORD-1012"}']
+
+# Invalid lists fail locally; nullable components don't produce a misleading key.
+statement error
+SELECT sem_key_columns('shipments', []);
+----
+key: expected a non-empty list
+
+statement error
+SELECT sem_key_columns('shipments', ['id', 'ID']);
+----
+key: duplicate column names
+
+statement error
+SELECT sem_key_columns('shipments', ['id', NULL]);
+----
+key: expected a column name
+
+statement error
+SELECT sem_key_columns('shipments', ['id', 'missing']);
+----
+key: no column `missing`
+
+query III
+SELECT sem_record_key('{"a":1,"b":null}', ['a','b']) IS NULL,
+       sem_record_key('{"a":1}', ['a','b']) IS NULL,
+       sem_record_key('{"a":"001"}', ['a']);
+----
+true	true	001
+
+# Materialize both surfaces to test their contract, not the model's exact scores.
+statement ok
+CREATE TEMP TABLE report_detail AS SELECT * FROM sem_report_rows('shipments', rows:=20);
+
+statement ok
+CREATE TEMP TABLE report_summary AS SELECT * FROM sem_report('shipments', rows:=20);
+
+# Every summary has exactly the flagged/review counts returned by drill-down.
+# FULL JOIN also detects detail groups that the summary lost.
+query I
+SELECT count(*) FROM report_summary s FULL JOIN (
+    SELECT finding_id, count(*) FILTER (disposition = 'flagged') AS flagged,
+           count(*) FILTER (disposition = 'review') AS review
+    FROM report_detail GROUP BY finding_id
+) d USING (finding_id)
+WHERE s.finding_id IS NULL OR d.finding_id IS NULL
+   OR s.rows_flagged <> d.flagged OR s.rows_to_review <> d.review;
+----
+0
+
+# Sample ids and keys stay paired, including review examples.
+query I
+SELECT count(*) FROM (
+    SELECT finding_id, unnest(example_rows) AS row_id, unnest(example_keys) AS row_key, 'flagged' AS disposition
+    FROM report_summary
+    UNION ALL
+    SELECT finding_id, unnest(review_rows), unnest(review_keys), 'review' FROM report_summary
+) e LEFT JOIN report_detail d USING (finding_id, row_id, disposition)
+WHERE d.row_id IS NULL OR e.row_key IS DISTINCT FROM d.row_key;
+----
+0
+
+# Multiple probes noticing the same conflict yield one record per finding.
+query II
+SELECT list(row_key ORDER BY row_key::INT), bool_and(list_contains(probe_ids, 'geo_inconsistent'))
+FROM report_detail WHERE scope = 'row' AND column_name = 'postal_code';
+----
+[5, 12]	true
+
+query I
+SELECT count(*) FROM (SELECT finding_id, row_id FROM report_detail GROUP BY ALL HAVING count(*) > 1);
+----
+0
+
+# Retracted test-data accusations don't leak into the report drill-down.
+query I
+SELECT count(*) FROM report_detail
+WHERE scope = 'row' AND row_key = '6' AND list_contains(probe_ids, 'row_is_test_data');
+----
+0
+
+# The sentinel's row accusation is already represented by its value finding.
+query I
+SELECT count(*) FROM report_detail WHERE scope = 'row' AND row_key = '19';
+----
+0
+
+# A report is not restricted to the five example keys. Raise the threshold to
+# exercise review-only groups and verify the same contract with a composite key.
+statement ok
+CREATE TEMP TABLE review_detail AS
+SELECT * FROM sem_report_rows('shipments', threshold:=0.99, rows:=20, key:=['id','order_ref']);
+
+query I
+SELECT count(*) > 0 FROM review_detail WHERE disposition = 'review';
+----
+true
+
+query I
+SELECT count(*) FROM sem_report('shipments', threshold:=0.99, rows:=20, key:=['id','order_ref']) s FULL JOIN (
+    SELECT finding_id, count(*) FILTER (disposition = 'flagged') AS flagged,
+           count(*) FILTER (disposition = 'review') AS review
+    FROM review_detail GROUP BY finding_id
+) d USING (finding_id)
+WHERE s.finding_id IS NULL OR d.finding_id IS NULL
+   OR s.rows_flagged <> d.flagged OR s.rows_to_review <> d.review;
+----
+0
+
+# Composite keys can join directly to original records without parsing row_json.
+query I
+SELECT count(*) FROM review_detail d LEFT JOIN shipments s
+  ON (d.row_key::JSON->>'id')::INT = s.id AND (d.row_key::JSON->>'order_ref') = s.order_ref
+WHERE s.id IS NULL;
+----
+0
+
+# Ids identify report groups, independent of threshold or chosen record key.
+query I
+SELECT count(*) FROM report_detail a JOIN review_detail b
+ON a.scope = b.scope AND a.column_name = b.column_name
+AND (a.scope = 'row' OR a.probe_ids = b.probe_ids)
+WHERE a.finding_id <> b.finding_id;
+----
+0
+
+query I
+SELECT count(*) = count(DISTINCT finding_id) FROM sem_profile('shipments', rows:=20);
+----
+true
 
 query I
 SELECT json_extract(sem_stats(), '$.requests');

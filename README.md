@@ -162,7 +162,8 @@ anyway, or run the script `sem_sql()` returns on your own connection.
 | `sem_values(tbl, rows := 100, …)` | raw per-row judgments, long form |
 | `sem_report(tbl, threshold := 0.7, …, key := NULL)` | findings aggregated per probe (value) or per field (row), with evidence |
 | `sem_row_fields(tbl, …, key := NULL)` | for each suspect row, the fields a row-level check blames |
-| `sem_findings(tbl, …, key := NULL)` | the individual flagged rows |
+| `sem_findings(tbl, …, key := NULL)` | raw threshold crossings, before report retractions/grouping |
+| `sem_report_rows(tbl, …, key := NULL)` | every flagged/review record retained by the report, with keys and finding IDs |
 | `sem_cost(tbl, …)` | dry run: request and token estimate, attribution ceiling |
 | `sem_catalog()` | the probe catalog |
 
@@ -211,8 +212,8 @@ typical 0.1, and never reached 0.7.
 
 `example_rows` and `review_rows` are positions in the sample, not your table's
 keys. `example_keys` and `review_keys` give the same rows, in the same order, by
-the table's own key: its single-column `PRIMARY KEY` if it declares one, or
-whatever column you name with `key`. The demo table declares none, so:
+the table's own key: its `PRIMARY KEY` (including composite keys) if it declares
+one, or the column name or list of column names you pass as `key`. The demo table declares none, so:
 
 ```sql
 SELECT column_name, example_rows, example_keys
@@ -228,18 +229,60 @@ category      [1]           [6]
 customer      [15]          [1]
 ```
 
-With no primary key and no `key` (a view, or a composite key) the key columns
-are NULL. A `key` that is not a column is an error. `sem_findings` and
-`sem_row_fields` take the same argument and return a `row_key` column, so you can
-drill in by your own ids, with the same arguments you profiled with:
+With no primary key and no explicit `key` (for example, a view), the key columns
+are NULL. Unknown column names, empty key lists, repeated columns, and NULL list
+entries are errors. Names are resolved case-insensitively, as in SQL.
+`SELECT sem_key_columns('shipments', 'id')` checks the selection locally without
+making API requests.
+
+Single-column keys come back as `VARCHAR`; cast them to join to your table.
+Composite keys come back as JSON objects encoded as `VARCHAR`, preserving names
+and value types. For example, `key := ['order_id', 'line_number']` might return
+`{"order_id":"ORD-1005","line_number":2}`. Explicit composite-key order follows
+the supplied list; automatic primary-key order follows the table's column order.
+If any component is NULL, the entire `row_key` is NULL. Explicit keys are not
+checked for uniqueness: choose non-null columns that identify a record. Findings
+are never merged just because their key values match.
+
+### Drill into a report
+
+`example_keys` and `review_keys` contain at most five records each.
+**`sem_report_rows()` returns all sampled records represented by the report**,
+with the same retractions, duplicate suppression and field grouping. Its
+`disposition` is `flagged` or `review`, `probe_ids` is a list of contributing
+checks, and `row_json` contains the complete sampled record.
 
 ```sql
-SELECT row_key, probe_id, field_1, field_2, retracted
-FROM sem_row_fields('shipments', rows := 20, key := 'id')
-WHERE row_key IN ('5', '12');
+SELECT d.row_key, d.disposition, d.probe_ids, d.evidence, s.*
+FROM sem_report_rows('shipments', rows := 20, key := 'id') d
+JOIN shipments s ON s.id = d.row_key::INTEGER
+WHERE d.scope = 'row' AND d.column_name = 'postal_code';
 ```
 
-Keys come back as `VARCHAR`; cast them to join back to your table.
+`sem_profile()`, `sem_report()` and `sem_report_rows()` share a `finding_id`, so
+an application can open a summary finding and fetch its records by that ID.
+Use the same table name, thresholds, sample sizes and other profiling options
+for summary and detail. The ID identifies a report group, not a record or saved
+run: it uses the supplied table name, scope, field and (for value/column findings)
+probe. A row group's ID survives changes in its contributing probes, but changes
+if attribution moves the group to another field. Renaming the table or using a
+different qualified name also changes IDs. Column findings have no detail rows.
+
+For composite keys, extract the components to join:
+
+```sql
+SELECT d.disposition, d.evidence, s.*
+FROM sem_report_rows('shipments', rows := 20, key := ['id', 'order_ref']) d
+JOIN shipments s ON s.id = (d.row_key::JSON->>'id')::INTEGER
+                AND s.order_ref = (d.row_key::JSON->>'order_ref');
+```
+
+`sem_findings()` still returns raw threshold crossings, including judgments that
+the report later retracts or consolidates. `sem_row_fields()` exposes attribution
+and its `retracted` flag. Both accept the same `key` argument. Selecting a key
+changes only the output; it does not change model requests or invalidate cached
+judgments. Keep the source data unchanged between profiling and drill-down, or
+materialize the detail results to retain a snapshot.
 
 **NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
 "is this a placeholder?" about one invites a yes — exactly backwards, since

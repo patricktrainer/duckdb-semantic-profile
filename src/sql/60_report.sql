@@ -37,50 +37,22 @@ CREATE OR REPLACE MACRO sem_column_flags(tbl, n := 200, threshold := 0.7) AS TAB
     WHERE probability >= threshold
     ORDER BY probability DESC;
 
--- Value- and row-level findings, aggregated per probe.
---
--- Row findings are grouped by the field they are about (see sem_row_fields),
--- across probes, so one defect reads as one finding with a count -- "status:
--- 11 rows" -- rather than as eleven, or as the same rows once per probe that
--- noticed them. Two kinds of row judgment are dropped on the way: ones that
--- backed off to `no_conflict` when asked what they were about, and ones whose
--- main field already carries a value finding on that row, which they only
--- restate.
-CREATE OR REPLACE MACRO sem_report(
+-- Stable within a table name and report grouping; independent of sample
+-- positions, thresholds and which row probes happened to notice the defect.
+CREATE OR REPLACE MACRO sem_finding_id(tbl, scope, column_name, probe_id) AS
+    md5(to_json([tbl, scope, column_name, CASE WHEN scope <> 'row' THEN probe_id END])::VARCHAR);
+
+-- Every record represented by a report, including borderline review rows.
+-- This owns row retraction, suppression and grouping so summary and drill-down
+-- cannot disagree. sem_findings remains the raw model-judgment interface.
+CREATE OR REPLACE MACRO sem_report_rows(
     tbl, threshold := 0.7, rows := 100, n := 200,
     min_relevance := 0.5, max_per_column := 4, max_row_probes := 5, min_type_confidence := 0.6,
     review_floor := 0.5, review_lift := 0.3, key := NULL
 ) AS TABLE
     WITH v AS (
-        SELECT *, json_extract_string(row_json, sem_path(sem_key(tbl, key))) AS row_key
+        SELECT *, sem_record_key(row_json, sem_key_columns(tbl, key)) AS row_key
         FROM sem_values(tbl, rows, n, min_relevance, max_per_column, max_row_probes, min_type_confidence)
-    ),
-    value_findings AS (
-        SELECT scope,
-               column_name,
-               probe_id,
-               count(*)                                                   AS rows_checked,
-               count(*) FILTER (probability >= threshold)                 AS rows_flagged,
-               round(count(*) FILTER (probability >= threshold) / count(*)::DOUBLE, 4) AS flag_rate,
-               -- Calibrated uncertainty is a result, not a failure: these are the
-               -- cases worth a person's attention rather than an automated verdict.
-               count(*) FILTER (probability BETWEEN 0.4 AND 0.6)          AS needs_review,
-               round(max(probability), 3)                                 AS max_probability,
-               list(DISTINCT value) FILTER (probability >= threshold AND value IS NOT NULL)[1:3] AS examples,
-               list(row_id ORDER BY probability DESC, row_id) FILTER (probability >= threshold)[1:5] AS example_rows,
-               -- The same rows by the table's own key, in the same order.
-               CASE WHEN sem_key(tbl, key) IS NOT NULL THEN
-                   list(row_key ORDER BY probability DESC, row_id) FILTER (probability >= threshold)[1:5]
-               END                                                        AS example_keys,
-               -- Borderline *value* judgments are not surfaced: on real data they
-               -- were mostly a value already flagged by a sibling probe, or noise.
-               0::BIGINT                                                  AS rows_to_review,
-               NULL::BIGINT[]                                             AS review_rows,
-               NULL::VARCHAR[]                                            AS review_keys
-        FROM v
-        WHERE scope = 'value'
-        GROUP BY scope, column_name, probe_id
-        HAVING count(*) FILTER (probability >= threshold) > 0
     ),
     flagged_cells AS (
         SELECT DISTINCT row_id, column_name FROM v
@@ -117,6 +89,7 @@ CREATE OR REPLACE MACRO sem_report(
     per_row AS (
         SELECT row_id, anchor,
                any_value(row_key)                                      AS row_key,
+               any_value(row_json)                                     AS row_json,
                max(probability)                                        AS probability,
                bool_or(flagged)                                        AS flagged,
                list(DISTINCT probe_id ORDER BY probe_id)               AS probes,
@@ -125,6 +98,72 @@ CREATE OR REPLACE MACRO sem_report(
                        probability)                                    AS evidence
         FROM (SELECT *, CASE WHEN anchor = field_1 THEN field_2 ELSE field_1 END AS other FROM anchored)
         GROUP BY row_id, anchor
+    )
+    SELECT sem_finding_id(tbl, scope, column_name, probe_ids[1]) AS finding_id, *
+    FROM (
+        SELECT row_id, row_key, 'value' AS scope, column_name,
+               [probe_id] AS probe_ids, probability, 'flagged' AS disposition,
+               value AS evidence, row_json
+        FROM v WHERE scope = 'value' AND probability >= threshold
+        UNION ALL
+        SELECT row_id, row_key, 'row', anchor, probes, probability,
+               CASE WHEN flagged THEN 'flagged' ELSE 'review' END,
+               evidence, row_json
+        FROM per_row
+    )
+    ORDER BY probability DESC, row_id, scope, column_name;
+
+-- Value- and row-level findings, aggregated per probe.
+--
+-- Row findings are grouped by the field they are about (see sem_row_fields),
+-- across probes, so one defect reads as one finding with a count -- "status:
+-- 11 rows" -- rather than as eleven, or as the same rows once per probe that
+-- noticed them. Two kinds of row judgment are dropped on the way: ones that
+-- backed off to `no_conflict` when asked what they were about, and ones whose
+-- main field already carries a value finding on that row, which they only
+-- restate.
+CREATE OR REPLACE MACRO sem_report(
+    tbl, threshold := 0.7, rows := 100, n := 200,
+    min_relevance := 0.5, max_per_column := 4, max_row_probes := 5, min_type_confidence := 0.6,
+    review_floor := 0.5, review_lift := 0.3, key := NULL
+) AS TABLE
+    WITH v AS (
+        SELECT *, sem_record_key(row_json, sem_key_columns(tbl, key)) AS row_key
+        FROM sem_values(tbl, rows, n, min_relevance, max_per_column, max_row_probes, min_type_confidence)
+    ),
+    value_findings AS (
+        SELECT scope,
+               column_name,
+               probe_id,
+               count(*)                                                   AS rows_checked,
+               count(*) FILTER (probability >= threshold)                 AS rows_flagged,
+               round(count(*) FILTER (probability >= threshold) / count(*)::DOUBLE, 4) AS flag_rate,
+               -- Calibrated uncertainty is a result, not a failure: these are the
+               -- cases worth a person's attention rather than an automated verdict.
+               count(*) FILTER (probability BETWEEN 0.4 AND 0.6)          AS needs_review,
+               round(max(probability), 3)                                 AS max_probability,
+               list(DISTINCT value) FILTER (probability >= threshold AND value IS NOT NULL)[1:3] AS examples,
+               list(row_id ORDER BY probability DESC, row_id) FILTER (probability >= threshold)[1:5] AS example_rows,
+               -- The same rows by the table's own key, in the same order.
+               CASE WHEN sem_key_columns(tbl, key) IS NOT NULL THEN
+                   list(row_key ORDER BY probability DESC, row_id) FILTER (probability >= threshold)[1:5]
+               END                                                        AS example_keys,
+               -- Borderline *value* judgments are not surfaced: on real data they
+               -- were mostly a value already flagged by a sibling probe, or noise.
+               0::BIGINT                                                  AS rows_to_review,
+               NULL::BIGINT[]                                             AS review_rows,
+               NULL::VARCHAR[]                                            AS review_keys
+        FROM v
+        WHERE scope = 'value'
+        GROUP BY scope, column_name, probe_id
+        HAVING count(*) FILTER (probability >= threshold) > 0
+    ),
+    per_row AS (
+        SELECT row_id, row_key, column_name AS anchor, probe_ids AS probes,
+               probability, disposition = 'flagged' AS flagged, evidence
+        FROM sem_report_rows(tbl, threshold, rows, n, min_relevance, max_per_column,
+                             max_row_probes, min_type_confidence, review_floor, review_lift, key)
+        WHERE scope = 'row'
     ),
     sampled AS (
         SELECT count(DISTINCT row_id) AS rows_checked FROM v WHERE scope = 'row'
@@ -138,29 +177,31 @@ CREATE OR REPLACE MACRO sem_report(
                round(count(*) FILTER (flagged) / any_value(s.rows_checked)::DOUBLE, 4) AS flag_rate,
                NULL::BIGINT                                               AS needs_review,
                round(max(probability), 3)                                 AS max_probability,
-               list(evidence ORDER BY probability DESC)[1:3]             AS examples,
+               list(evidence ORDER BY probability DESC, row_id)[1:3]             AS examples,
                list(row_id ORDER BY probability DESC, row_id) FILTER (flagged)[1:5] AS example_rows,
-               CASE WHEN sem_key(tbl, key) IS NOT NULL THEN
+               CASE WHEN sem_key_columns(tbl, key) IS NOT NULL THEN
                    list(row_key ORDER BY probability DESC, row_id) FILTER (flagged)[1:5]
                END                                                        AS example_keys,
                count(*) FILTER (NOT flagged)                              AS rows_to_review,
                list(row_id ORDER BY probability DESC, row_id) FILTER (NOT flagged)[1:5] AS review_rows,
-               CASE WHEN sem_key(tbl, key) IS NOT NULL THEN
+               CASE WHEN sem_key_columns(tbl, key) IS NOT NULL THEN
                    list(row_key ORDER BY probability DESC, row_id) FILTER (NOT flagged)[1:5]
                END                                                        AS review_keys
         FROM per_row, sampled s
         GROUP BY anchor
     )
-    SELECT * FROM (SELECT * FROM value_findings UNION ALL SELECT * FROM row_findings)
+    SELECT *, sem_finding_id(tbl, scope, column_name, probe_id) AS finding_id
+    FROM (SELECT * FROM value_findings UNION ALL SELECT * FROM row_findings)
     ORDER BY rows_flagged + rows_to_review DESC, max_probability DESC;
 
--- Individual flagged rows, for drilling into a finding.
+-- Raw threshold crossings, before report retractions and grouping.
+-- Use sem_report_rows to drill into exactly the records retained by a report.
 CREATE OR REPLACE MACRO sem_findings(
     tbl, threshold := 0.7, rows := 100, n := 200,
     min_relevance := 0.5, max_per_column := 4, max_row_probes := 5, min_type_confidence := 0.6,
     key := NULL
 ) AS TABLE
-    SELECT row_id, json_extract_string(row_json, sem_path(sem_key(tbl, key))) AS row_key,
+    SELECT row_id, sem_record_key(row_json, sem_key_columns(tbl, key)) AS row_key,
            scope, column_name, probe_id, round(probability, 3) AS probability, value, row_json
     FROM sem_values(tbl, rows, n, min_relevance, max_per_column, max_row_probes, min_type_confidence)
     WHERE probability >= threshold
@@ -211,7 +252,8 @@ CREATE OR REPLACE MACRO sem_profile(tbl, threshold := 0.7, rows := 100, n := 200
                NULL::BIGINT AS rows_flagged, NULL::DOUBLE AS flag_rate,
                round(probability, 3) AS max_probability, NULL::VARCHAR[] AS examples,
                NULL::BIGINT[] AS example_rows, NULL::VARCHAR[] AS example_keys,
-               NULL::BIGINT AS rows_to_review, NULL::BIGINT[] AS review_rows, NULL::VARCHAR[] AS review_keys
+               NULL::BIGINT AS rows_to_review, NULL::BIGINT[] AS review_rows, NULL::VARCHAR[] AS review_keys,
+               sem_finding_id(tbl, scope, column_name, probe_id) AS finding_id
         FROM sem_column_flags(tbl, n, threshold)
         UNION ALL
         -- For a row finding, column_name is the pair of fields it is about and
@@ -220,7 +262,7 @@ CREATE OR REPLACE MACRO sem_profile(tbl, threshold := 0.7, rows := 100, n := 200
                CASE WHEN rows_flagged = 0
                     THEN 'below threshold, but these rows stand out from the rest; review_rows lists them' END AS finding,
                rows_flagged, flag_rate, max_probability, examples, example_rows, example_keys,
-               nullif(rows_to_review, 0), nullif(review_rows, []), nullif(review_keys, [])
+               nullif(rows_to_review, 0), nullif(review_rows, []), nullif(review_keys, []), finding_id
         FROM sem_report(tbl, threshold, rows, n, key := key)
     )
     ORDER BY coalesce(rows_flagged, 0) + coalesce(rows_to_review, 0) DESC, max_probability DESC;
