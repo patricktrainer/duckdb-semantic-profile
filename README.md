@@ -238,8 +238,12 @@ making API requests.
 Single-column keys come back as `VARCHAR`; cast them to join to your table.
 Composite keys come back as JSON objects encoded as `VARCHAR`, preserving names
 and value types. For example, `key := ['order_id', 'line_number']` might return
-`{"order_id":"ORD-1005","line_number":2}`. Explicit composite-key order follows
-the supplied list; automatic primary-key order follows the table's column order.
+`{"order_id":"ORD-1005","line_number":2}`. Components come in the order of the
+supplied list or, for a primary key, the order it was declared in, so a table
+declared `PRIMARY KEY (order_id, line_number)` gives the same `row_key` whether
+the key is detected or named. (If the declared order cannot be pinned to one
+table, such as under a custom `search_path`, a detected key falls back to column
+order; name it explicitly to be sure.)
 If any component is NULL, the entire `row_key` is NULL. Explicit keys are not
 checked for uniqueness: choose non-null columns that identify a record. Findings
 are never merged just because their key values match.

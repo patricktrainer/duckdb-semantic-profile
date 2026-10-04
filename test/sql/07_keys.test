@@ -254,6 +254,50 @@ SELECT count(*) = count(DISTINCT finding_id) FROM sem_profile('shipments', rows:
 ----
 true
 
+# An automatic primary key follows its declared order, not column order, so
+# that detecting the key and naming it give the same record keys.
+statement ok
+CREATE TABLE lines (line INTEGER, order_ref VARCHAR, note VARCHAR, PRIMARY KEY (order_ref, line));
+
+query II
+SELECT sem_key_columns('lines'),
+       sem_record_key('{"line":2,"order_ref":"ORD-1"}', sem_key_columns('lines'))
+     = sem_record_key('{"line":2,"order_ref":"ORD-1"}', sem_key_columns('lines', ['order_ref', 'line']));
+----
+[order_ref, line]	true
+
+# The declared order is looked up by the name as DuckDB resolves it. Tables of
+# the same name elsewhere, declared in another order, do not interfere.
+statement ok
+ATTACH ':memory:' AS other;
+
+statement ok
+CREATE SCHEMA other.s;
+
+statement ok
+CREATE TABLE other.main.lines (line INTEGER, order_ref VARCHAR, PRIMARY KEY (line, order_ref));
+
+statement ok
+CREATE TABLE other.s."odd.name" (line INTEGER, "Order Ref" VARCHAR, PRIMARY KEY ("Order Ref", line));
+
+statement ok
+CREATE TEMP TABLE shadow (e INTEGER, d INTEGER, PRIMARY KEY (e, d));
+
+statement ok
+CREATE TABLE main.shadow (e INTEGER, d INTEGER, PRIMARY KEY (d, e));
+
+query IIIIII
+SELECT sem_key_columns('lines'), sem_key_columns('main.lines'), sem_key_columns('memory.main.lines'),
+       sem_key_columns('other.lines'), sem_key_columns('other.main.lines'), sem_key_columns('OTHER.S."odd.name"');
+----
+[order_ref, line]	[order_ref, line]	[order_ref, line]	[line, order_ref]	[line, order_ref]	[Order Ref, line]
+
+# A bare name finds a temp table before the main schema, as DuckDB does.
+query II
+SELECT sem_key_columns('shadow'), sem_key_columns('main.shadow');
+----
+[e, d]	[d, e]
+
 query I
 SELECT json_extract(sem_stats(), '$.requests');
 ----
