@@ -10,8 +10,8 @@ con.execute("SELECT sem_reset_stats()")
 
 con.execute("""
 CREATE TABLE f AS
-SELECT json_extract(row_json,'$.id')::INT AS id, scope, column_name, probe_id, probability
-FROM sem_findings('shipments', threshold:=0.7, rows:=20)""")
+SELECT row_key::INT AS id, scope, column_name, probe_id, probability
+FROM sem_findings('shipments', threshold:=0.7, rows:=20, key:='id')""")
 
 # (label, expected id, predicate over findings)
 EXPECT = [
@@ -49,12 +49,10 @@ print(f"{found}/{len(EXPECT)} planted defects detected at threshold 0.7")
 # here but not required.
 print("\nCross-column defects in sem_report:")
 report = con.sql("""
-  WITH ids AS (SELECT row_id, json_extract(row_json,'$.id')::INT AS id FROM sem_sample('shipments', 20)),
-  r AS (SELECT scope, column_name,
-               unnest(list_concat(coalesce(example_rows, []), coalesce(review_rows, []))) AS row_id
-        FROM sem_report('shipments', threshold:=0.7, rows:=20))
-  SELECT scope, column_name, list(DISTINCT id ORDER BY id)
-  FROM r JOIN ids USING (row_id) GROUP BY ALL""").fetchall()
+  WITH r AS (SELECT scope, column_name,
+                    unnest(list_concat(coalesce(example_keys, []), coalesce(review_keys, [])))::INT AS id
+             FROM sem_report('shipments', threshold:=0.7, rows:=20, key:='id'))
+  SELECT scope, column_name, list(DISTINCT id ORDER BY id) FROM r GROUP BY ALL""").fetchall()
 covered = 0
 cross = [("country/postcode contradict", {5, 12}),
          ("shipped with no ship date", {7, 15}),

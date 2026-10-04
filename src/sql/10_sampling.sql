@@ -10,6 +10,18 @@ CREATE OR REPLACE MACRO sem_schema(tbl) AS TABLE
     SELECT cid AS ordinal, name AS column_name, type AS declared_type
     FROM pragma_table_info(tbl);
 
+-- The column that identifies a row in the user's own table, so findings can name
+-- rows by it rather than by their position in the sample. An explicit `key` must
+-- exist; without one, a single-column PRIMARY KEY is used, and anything else
+-- (a view, no key, a composite key) resolves to NULL.
+CREATE OR REPLACE MACRO sem_key(tbl, key) AS (
+    SELECT CASE
+        WHEN key IS NULL THEN CASE WHEN count(*) FILTER (pk) = 1 THEN any_value(name) FILTER (pk) END
+        WHEN count(*) FILTER (name = key) = 0 THEN error('key: no column `' || key || '` in ' || tbl)
+        ELSE key
+    END
+    FROM pragma_table_info(tbl));
+
 CREATE OR REPLACE MACRO sem_sample(tbl, n := 200) AS TABLE
     SELECT row_number() OVER (ORDER BY h) AS row_id, row_json
     FROM (

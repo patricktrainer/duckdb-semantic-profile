@@ -87,6 +87,13 @@ FROM sem_report('shipments', rows:=20) WHERE scope = 'row' AND column_name = 'po
 ----
 postal_code	geo_inconsistent, internally_contradictory, row_is_test_data	2	true
 
+# Without a primary key or a `key` argument, findings name sample positions only.
+query I
+SELECT count(*) FROM sem_profile('shipments', rows:=20)
+WHERE example_keys IS NOT NULL OR review_keys IS NOT NULL;
+----
+0
+
 # Rows 7 and 15 name different second fields (notes vs shipped_at) for the
 # same "shipped with no ship date" defect; both are anchored on status. Row 19's
 # timeline problem IS its 9999-12-31 sentinel, already reported against

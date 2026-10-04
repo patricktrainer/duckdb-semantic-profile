@@ -156,13 +156,13 @@ anyway, or run the script `sem_sql()` returns on your own connection.
 
 | | |
 |---|---|
-| `sem_profile(tbl, threshold := 0.7, rows := 100, n := 200)` | every finding, column-, value- and row-level |
+| `sem_profile(tbl, threshold := 0.7, rows := 100, n := 200, key := NULL)` | every finding, column-, value- and row-level |
 | `sem_columns(tbl, n := 200)` | what each column actually is |
 | `sem_probes(tbl, …)` | which checks were chosen, and their relevance |
 | `sem_values(tbl, rows := 100, …)` | raw per-row judgments, long form |
-| `sem_report(tbl, threshold := 0.7, …)` | findings aggregated per probe (value) or per field (row), with evidence |
-| `sem_row_fields(tbl, …)` | for each suspect row, the fields a row-level check blames |
-| `sem_findings(tbl, …)` | the individual flagged rows |
+| `sem_report(tbl, threshold := 0.7, …, key := NULL)` | findings aggregated per probe (value) or per field (row), with evidence |
+| `sem_row_fields(tbl, …, key := NULL)` | for each suspect row, the fields a row-level check blames |
+| `sem_findings(tbl, …, key := NULL)` | the individual flagged rows |
 | `sem_cost(tbl, …)` | dry run: request and token estimate, attribution ceiling |
 | `sem_catalog()` | the probe catalog |
 
@@ -198,8 +198,7 @@ binary classifier would have to pick a side and be wrong either way; here the tw
 rows land in `needs_review` and a person decides.
 
 Every finding carries evidence — `examples` holds the actual offending values,
-`example_rows` their sample ordinals, and `sem_values` / `sem_findings`
-return `row_json` so you can join findings back to your own key.
+`example_rows` their sample ordinals and `example_keys` their keys in your table.
 
 A row-level finding has no single offending value, so it names the field instead:
 `column_name` is the field most blamed, `examples` shows it with the field it
@@ -210,15 +209,37 @@ as `rows_to_review` / `review_rows`. On NYC 311 data that is how a real defect
 surfaced: 11 requests left `Pending` with closed dates, scored ~0.6 against a
 typical 0.1, and never reached 0.7.
 
-Row ids are positions in the sample, **not** your table's keys: the
-`postal_code` rows `[17, 11]` above are `id` 5 and 12. Drill in with the same
-arguments you profiled with:
+`example_rows` and `review_rows` are positions in the sample, not your table's
+keys. `example_keys` and `review_keys` give the same rows, in the same order, by
+the table's own key: its single-column `PRIMARY KEY` if it declares one, or
+whatever column you name with `key`. The demo table declares none, so:
 
 ```sql
-SELECT row_id, row_json->>'id' AS id, probe_id, field_1, field_2, retracted
-FROM sem_row_fields('shipments', rows := 20)
-WHERE row_id IN (17, 11);
+SELECT column_name, example_rows, example_keys
+FROM sem_profile('shipments', rows := 20, key := 'id')
+WHERE scope = 'row';
 ```
+
+```
+column_name   example_rows  example_keys
+postal_code   [17, 11]      [5, 12]
+status        [3, 20]       [15, 7]
+category      [1]           [6]
+customer      [15]          [1]
+```
+
+With no primary key and no `key` (a view, or a composite key) the key columns
+are NULL. A `key` that is not a column is an error. `sem_findings` and
+`sem_row_fields` take the same argument and return a `row_key` column, so you can
+drill in by your own ids, with the same arguments you profiled with:
+
+```sql
+SELECT row_key, probe_id, field_1, field_2, retracted
+FROM sem_row_fields('shipments', rows := 20, key := 'id')
+WHERE row_key IN ('5', '12');
+```
+
+Keys come back as `VARCHAR`; cast them to join back to your table.
 
 **NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
 "is this a placeholder?" about one invites a yes — exactly backwards, since
