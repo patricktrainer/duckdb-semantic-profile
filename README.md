@@ -145,6 +145,18 @@ SELECT * FROM sem_profile('db.main.orders', rows := 50);
 
 `LOAD` before `ATTACH`, and qualified table names work throughout.
 
+Stay in the in-memory database rather than `USE`-ing the attached one. The macros
+live in `memory.main`, so after `USE db` every `sem_*` call fails with
+`Table Function with name sem_profile does not exist`, and qualifying it as
+`memory.main.sem_profile` does not help, because the macros it calls are looked
+up the same way. Either `USE memory` and qualify your table names, or keep the
+macros on the search path:
+
+```sql
+USE db;
+SET search_path = 'db.main,memory.main';
+```
+
 On a file-backed or read-only database the macros are skipped, `LOAD` still
 succeeds, the scalar functions still work, and `sem_status()` says why. Set
 `SEMANTIC_PROFILE_INSTALL_MACROS=1` before `LOAD` to install them into that catalog
