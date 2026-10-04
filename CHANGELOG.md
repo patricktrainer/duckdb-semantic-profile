@@ -17,7 +17,8 @@
 - Ties in `example_rows` / `review_rows` are now broken by row id, so the order is
   deterministic and the key lists line up with it.
 - **Composite record keys**, automatically detected from a composite primary key
-  or selected explicitly. Components retain their names and JSON value types;
+  or selected explicitly. A detected primary key keeps its declared order, so it
+  matches the same key named explicitly. Components retain their names and JSON value types;
   single-column keys retain their existing string representation. Key names are
   case-insensitive; malformed lists are rejected. Any NULL component yields a
   NULL record key.

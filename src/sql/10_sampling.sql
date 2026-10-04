@@ -10,11 +10,44 @@ CREATE OR REPLACE MACRO sem_schema(tbl) AS TABLE
     SELECT cid AS ordinal, name AS column_name, type AS declared_type
     FROM pragma_table_info(tbl);
 
--- Resolve explicit key columns (a name or list of names), or every primary-key
--- column in schema order. Views/unkeyed tables resolve to NULL; never guess.
+-- Resolve explicit key columns (a name or list of names), or the primary key in
+-- the order it was declared, so that `PRIMARY KEY (a, b)` and `key := ['a', 'b']`
+-- give the same record keys. Views/unkeyed tables resolve to NULL; never guess.
 -- Canonical schema names make case-insensitive SQL identifiers work in JSON too.
+--
+-- pragma_table_info knows which columns form the key but not their declared
+-- order; duckdb_constraints knows the order but is keyed by catalog names. So
+-- `tbl` is split into its parts and matched the way DuckDB resolves a name:
+-- `db.schema.table` exactly, `x.table` as a schema in the current database or a
+-- database's main schema, and a bare name in temp, then the current schema,
+-- then anywhere. Only the best-ranked matches count, and they must agree on one
+-- order covering exactly the columns pragma_table_info marks as key. Otherwise
+-- (say, a custom search_path) fall back to column order: a wrong match can then
+-- change only the order, never which columns form the key.
 CREATE OR REPLACE MACRO sem_key_columns(tbl, key := NULL) AS (
     WITH schema_cols AS (SELECT * FROM pragma_table_info(tbl)),
+    pk AS (SELECT list(name ORDER BY cid) FILTER (pk) AS cols FROM schema_cols),
+    parts AS (
+        SELECT list_transform(regexp_extract_all(tbl, '"(?:[^"]|"")*"|[^."]+'),
+                   lambda x: lower(CASE WHEN x LIKE '"%' THEN replace(x[2:-2], '""', '"') ELSE trim(x) END)) AS p
+    ),
+    candidates AS (
+        SELECT c.constraint_column_names AS cols,
+               CASE len(p)
+                   WHEN 3 THEN CASE WHEN lower(c.database_name) = p[1] AND lower(c.schema_name) = p[2] THEN 1 END
+                   WHEN 2 THEN CASE WHEN (lower(c.schema_name) = p[1] AND c.database_name = current_database())
+                                      OR (lower(c.database_name) = p[1] AND c.schema_name = 'main') THEN 1 END
+                   WHEN 1 THEN CASE WHEN c.database_name = 'temp' THEN 1
+                                    WHEN c.database_name = current_database() AND c.schema_name = current_schema() THEN 2
+                                    ELSE 3 END
+               END AS rank
+        FROM duckdb_constraints() c, parts
+        WHERE c.constraint_type = 'PRIMARY KEY' AND lower(c.table_name) = p[-1]
+    ),
+    declared AS (
+        SELECT list(DISTINCT cols) AS orders FROM candidates
+        WHERE rank = (SELECT min(rank) FROM candidates)
+    ),
     requested AS (
         SELECT CASE
             WHEN key IS NULL THEN NULL::VARCHAR[]
@@ -32,7 +65,9 @@ CREATE OR REPLACE MACRO sem_key_columns(tbl, key := NULL) AS (
         LEFT JOIN schema_cols s ON lower(s.name) = lower(r.name)
     )
     SELECT CASE
-        WHEN key IS NULL THEN (SELECT list(name ORDER BY cid) FILTER (pk) FROM schema_cols)
+        WHEN key IS NULL THEN (SELECT CASE WHEN len(orders) = 1 AND list_sort(orders[1]) = list_sort(cols)
+                                           THEN orders[1] ELSE cols END
+                               FROM pk, declared)
         WHEN len(names) = 0 THEN error('key: expected a non-empty list of column names')
         WHEN EXISTS (SELECT 1 FROM resolved WHERE name IS NULL)
             THEN error('key: no column `' || (SELECT requested_name FROM resolved WHERE name IS NULL ORDER BY ordinal LIMIT 1) || '` in ' || tbl)
