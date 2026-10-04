@@ -7,7 +7,8 @@
 - **Findings name rows by the table's own key.** `sem_profile` and `sem_report`
   have two more columns, `example_keys` and `review_keys`, holding the key values
   of the rows in `example_rows` and `review_rows`, in the same order. The key is
-  the table's single-column `PRIMARY KEY`, or the column passed as `key := '...'`.
+  the table's `PRIMARY KEY`, or the column/list passed as `key := '...'` or
+  `key := ['order_id', 'line_number']`.
   With neither they are NULL. `sem_findings` and `sem_row_fields` take the same
   `key` argument and return a `row_key` column after `row_id`. Queries that name
   their columns are unaffected; reading columns by position, or `SELECT *` into a
@@ -15,6 +16,18 @@
   one re-reads the cache rather than asking again.
 - Ties in `example_rows` / `review_rows` are now broken by row id, so the order is
   deterministic and the key lists line up with it.
+- **Composite record keys**, automatically detected from a composite primary key
+  or selected explicitly. Components retain their names and JSON value types;
+  single-column keys retain their existing string representation. Key names are
+  case-insensitive; malformed lists are rejected. Any NULL component yields a
+  NULL record key.
+- **`sem_report_rows()`** returns every sampled record retained by the report,
+  with `flagged`/`review` disposition, structured `probe_ids`, evidence and full
+  row JSON. Summary and detail share the same row grouping/retraction logic.
+  `sem_findings()` retains its existing raw-judgment behavior.
+- **`finding_id`** appended to `sem_report()` and `sem_profile()` and included in
+  `sem_report_rows()`, for joining summary findings to their complete detail.
+  IDs identify groups within the supplied table name, not persistent runs.
 
 ### Changed
 

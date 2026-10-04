@@ -132,7 +132,7 @@ CREATE OR REPLACE MACRO sem_row_fields(
         GROUP BY row_id, probe_id
     )
     SELECT a.row_id,
-           json_extract_string(a.row_json, sem_path(sem_key(tbl, key))) AS row_key,
+           sem_record_key(a.row_json, sem_key_columns(tbl, key)) AS row_key,
            a.probe_id,
            a.probability, a.flagged, a.to_review,
            t.fields[1] AS field_1,
