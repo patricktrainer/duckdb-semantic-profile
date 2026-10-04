@@ -145,6 +145,18 @@ SELECT * FROM sem_profile('db.main.orders', rows := 50);
 
 `LOAD` before `ATTACH`, and qualified table names work throughout.
 
+Stay in the in-memory database rather than `USE`-ing the attached one. The macros
+live in `memory.main`, so after `USE db` every `sem_*` call fails with
+`Table Function with name sem_profile does not exist`, and qualifying it as
+`memory.main.sem_profile` does not help, because the macros it calls are looked
+up the same way. Either `USE memory` and qualify your table names, or keep the
+macros on the search path:
+
+```sql
+USE db;
+SET search_path = 'db.main,memory.main';
+```
+
 On a file-backed or read-only database the macros are skipped, `LOAD` still
 succeeds, the scalar functions still work, and `sem_status()` says why. Set
 `SEMANTIC_PROFILE_INSTALL_MACROS=1` before `LOAD` to install them into that catalog
@@ -156,14 +168,16 @@ anyway, or run the script `sem_sql()` returns on your own connection.
 
 | | |
 |---|---|
-| `sem_profile(tbl, threshold := 0.7, rows := 100, n := 200)` | every finding, column-, value- and row-level |
+| `sem_profile(tbl, threshold := 0.7, rows := 100, n := 200, key := NULL)` | every finding, column-, value- and row-level |
 | `sem_columns(tbl, n := 200)` | what each column actually is |
 | `sem_probes(tbl, …)` | which checks were chosen, and their relevance |
 | `sem_values(tbl, rows := 100, …)` | raw per-row judgments, long form |
-| `sem_report(tbl, threshold := 0.7, …)` | findings aggregated per probe (value) or per field (row), with evidence |
-| `sem_row_fields(tbl, …)` | for each suspect row, the fields a row-level check blames |
-| `sem_findings(tbl, …)` | the individual flagged rows |
+| `sem_report(tbl, threshold := 0.7, …, key := NULL)` | findings aggregated per probe (value) or per field (row), with evidence |
+| `sem_row_fields(tbl, …, key := NULL)` | for each suspect row, the fields a row-level check blames |
+| `sem_findings(tbl, …, key := NULL)` | raw threshold crossings, before report retractions/grouping |
+| `sem_report_rows(tbl, …, key := NULL)` | every flagged/review record retained by the report, with keys and finding IDs |
 | `sem_cost(tbl, …)` | dry run: request and token estimate, attribution ceiling |
+| `sem_key_columns(tbl, key := NULL)` | the key findings will be reported by; makes no API calls |
 | `sem_catalog()` | the probe catalog |
 
 **Primitives** — TypeSafe judgments as plain SQL, useful on their own.
@@ -198,27 +212,55 @@ binary classifier would have to pick a side and be wrong either way; here the tw
 rows land in `needs_review` and a person decides.
 
 Every finding carries evidence — `examples` holds the actual offending values,
-`example_rows` their sample ordinals, and `sem_values` / `sem_findings`
-return `row_json` so you can join findings back to your own key.
+`example_rows` their sample ordinals and `example_keys` their keys in your table.
 
 A row-level finding has no single offending value, so it names the field instead:
 `column_name` is the field most blamed, `examples` shows it with the field it
 conflicts with (`postal_code=SW1A 1AA; country=US`), and `probe_id` lists every
 check that noticed. Rows it is less sure of — scored from 0.5 up to `threshold`,
 but at least 0.3 above what that check typically scored — are listed separately
-as `rows_to_review` / `review_rows`. On NYC 311 data that is how a real defect
-surfaced: 11 requests left `Pending` with closed dates, scored ~0.6 against a
-typical 0.1, and never reached 0.7.
+as `rows_to_review` / `review_rows`. On NYC 311 data (`demo/nyc311.sql`) that
+is how a real defect surfaced: 11 requests left `Pending` with closed dates,
+scored ~0.6 against a typical 0.1, and never reached 0.7.
 
-Row ids are positions in the sample, **not** your table's keys: the
-`postal_code` rows `[17, 11]` above are `id` 5 and 12. Drill in with the same
-arguments you profiled with:
+`example_rows` and `review_rows` are positions in the sample, not your table's
+keys. `example_keys` and `review_keys` give the same rows, in the same order, by
+the table's own key: its `PRIMARY KEY` (including composite keys) if it declares
+one, or the column name or list of column names you pass as `key`. The demo table
+declares none, so:
 
 ```sql
-SELECT row_id, row_json->>'id' AS id, probe_id, field_1, field_2, retracted
-FROM sem_row_fields('shipments', rows := 20)
-WHERE row_id IN (17, 11);
+SELECT column_name, example_rows, example_keys
+FROM sem_profile('shipments', rows := 20, key := 'id')
+WHERE scope = 'row';
 ```
+
+```
+column_name   example_rows  example_keys
+postal_code   [17, 11]      [5, 12]
+status        [3, 20]       [15, 7]
+category      [1]           [6]
+customer      [15]          [1]
+```
+
+With no primary key and no explicit `key` (for example, a view), the key columns
+are NULL. Unknown column names, empty key lists, repeated columns, and NULL list
+entries are errors. Names are resolved case-insensitively, as in SQL.
+`SELECT sem_key_columns('shipments', 'id')` checks the selection locally without
+making API requests.
+
+Single-column keys come back as `VARCHAR`; cast them to join to your table.
+Composite keys come back as JSON objects encoded as `VARCHAR`, preserving names
+and value types. For example, `key := ['order_id', 'line_number']` might return
+`{"order_id":"ORD-1005","line_number":2}`. Components come in the order of the
+supplied list or, for a primary key, the order it was declared in, so a table
+declared `PRIMARY KEY (order_id, line_number)` gives the same `row_key` whether
+the key is detected or named. (If the declared order cannot be pinned to one
+table, such as under a custom `search_path`, a detected key falls back to column
+order; name it explicitly to be sure.)
+If any component is NULL, the entire `row_key` is NULL. Explicit keys are not
+checked for uniqueness: choose non-null columns that identify a record. Findings
+are never merged just because their key values match.
 
 **NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
 "is this a placeholder?" about one invites a yes — exactly backwards, since
@@ -232,6 +274,46 @@ is only 0.51 sure that `product_name` holds product *codes*, then asking "is
 `Steel Bracket` a product code?" produces a confident wrong answer on every row.
 Those probes are skipped below `min_type_confidence` (default 0.6) rather than
 allowed to launder a shaky classification into 20 findings.
+
+### Drill into a report
+
+`example_keys` and `review_keys` contain at most five records each.
+**`sem_report_rows()` returns all sampled records represented by the report**,
+with the same retractions, duplicate suppression and field grouping. Its
+`disposition` is `flagged` or `review`, `probe_ids` is a list of contributing
+checks, and `row_json` contains the complete sampled record.
+
+```sql
+SELECT d.row_key, d.disposition, d.probe_ids, d.evidence, s.*
+FROM sem_report_rows('shipments', rows := 20, key := 'id') d
+JOIN shipments s ON s.id = d.row_key::INTEGER
+WHERE d.scope = 'row' AND d.column_name = 'postal_code';
+```
+
+`sem_profile()`, `sem_report()` and `sem_report_rows()` share a `finding_id`, so
+an application can open a summary finding and fetch its records by that ID.
+Use the same table name, thresholds, sample sizes and other profiling options
+for summary and detail. The ID identifies a report group, not a record or saved
+run: it uses the supplied table name, scope, field and (for value/column findings)
+probe. A row group's ID survives changes in its contributing probes, but changes
+if attribution moves the group to another field. Renaming the table or using a
+different qualified name also changes IDs. Column findings have no detail rows.
+
+For composite keys, extract the components to join:
+
+```sql
+SELECT d.disposition, d.evidence, s.*
+FROM sem_report_rows('shipments', rows := 20, key := ['id', 'order_ref']) d
+JOIN shipments s ON s.id = (d.row_key::JSON->>'id')::INTEGER
+                AND s.order_ref = (d.row_key::JSON->>'order_ref');
+```
+
+`sem_findings()` still returns raw threshold crossings, including judgments that
+the report later retracts or consolidates. `sem_row_fields()` exposes attribution
+and its `retracted` flag. Both accept the same `key` argument. Selecting a key
+changes only the output; it does not change model requests or invalidate cached
+judgments. Keep the source data unchanged between profiling and drill-down, or
+materialize the detail results to retain a snapshot.
 
 ## Settings
 

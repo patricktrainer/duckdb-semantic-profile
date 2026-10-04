@@ -1,0 +1,304 @@
+# name: test/sql/07_keys.test
+# description: findings name rows by the table's own key, not their sample position
+# group: [semantic_profile]
+#
+# Replays the frozen demo responses offline, like 05_replay, but with `shipments`
+# declared with a PRIMARY KEY. The key never enters a request, so the cache still
+# hits; only the report layer changes.
+
+require semantic_profile
+
+statement ok
+SELECT sem_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
+
+statement ok
+SELECT sem_config('offline', 'true');
+
+statement ok
+SELECT sem_reset_stats();
+
+statement ok
+CREATE TABLE shipments (id INTEGER PRIMARY KEY, order_ref VARCHAR, customer VARCHAR, email VARCHAR,
+    address VARCHAR, city VARCHAR, region VARCHAR, postal_code VARCHAR, country VARCHAR,
+    product_name VARCHAR, category VARCHAR, weight VARCHAR, qty INTEGER, status VARCHAR,
+    ordered_at VARCHAR, shipped_at VARCHAR, notes VARCHAR);
+
+statement ok
+INSERT INTO shipments SELECT * FROM (VALUES
+ (1,'ORD-1001','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Steel Bracket','Hardware','12 kg',2,'delivered','2024-03-01','2024-03-02','standard handling'),
+ (2,'ORD-1002','Nordwind GmbH','kontakt@nordwind.de','Hafenstrasse 14','Hamburg','HH','20457','DE','Copper Fitting','Hardware','26.4',1,'delivered','2024-03-01','2024-03-03','customer collected'),
+ (3,'ORD-1003','Test Company','test@test.com','123 Main St','Test City','CA','00000','US','Test Product','Test','1 kg',1,'delivered','2024-03-02','2024-03-02','asdf'),
+ (4,'ORD-1004','Harborline Ltd','post@harborline.co.uk','7 Dock Road','Bristol','ENG','BS1 6QH','GB','Steel Bracket','Hardware','9 kg',4,'delivered','2024-03-02','2024-03-04','none'),
+ (5,'ORD-1005','Pacific Freight','hello@pacfreight.com','88 Quay Street','Auckland','AUK','SW1A 1AA','US','Rubber Seal','Hardware','3 kg',10,'delivered','2024-03-03','2024-03-05','none'),
+ (6,'ORD-1006','Greenfield Co','sales@greenfield.com','22 Elm Avenue','Portland','OR','97205','US','Blue Cotton T-Shirt','Garden Tools','1 kg',6,'delivered','2024-03-03','2024-03-06','none'),
+ (7,'ORD-1007','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Steel Bracket','Hardware','12 kg',3,'shipped','2024-03-04','','awaiting carrier scan'),
+ (8,'ORD-1008','Delta Supplies','orders@delta.com; billing@delta.com','410 Pine Street','Seattle','WA','98101','US','Hex Nut','Hardware','0.5 kg',200,'delivered','2024-03-04','2024-03-06','none'),
+ (9,'ORD-1009','Rivera Logistics','contact@rivera.mx','Av. Reforma 500','Mexico City','CMX','06600','MX','Copper Fitting','Hardware','5 kg',8,'delivered','2024-03-05','2024-03-08','consignee SSN 078-05-1120 on file for customs'),
+ (10,'ORD-1010','Northgate Ltd','info@northgate.co.uk','15 Mill Lane','Leeds','ENG','LS1 4DY','GB','Rubber Seal','Hardware','2 kg',12,'delivered','2024-03-05','2024-03-07','none'),
+ (11,'ORD-1011','Summit Tools','buy@summittools.com','900 Ridge Road','Denver','CO','80202','US','Steel Bracket','Hardware','35.2',5,'delivered','2024-03-06','2024-03-08','none'),
+ (12,'ORD-1012','Bluewater Marine','sales@bluewater.com','3 Ocean Drive','Miami','FL','EC1A 1BB','US','Rubber Seal','Hardware','3 kg',7,'delivered','2024-03-06','2024-03-09','none'),
+ (13,'ORD-1013','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Hex Nut','Hardware','0.5 kg',150,'delivered','2024-03-07','2024-03-09','none'),
+ (14,'ORD-1014','Cedar Works','hello@cedarworks.com','DO NOT SHIP - see ticket 4412','Austin','TX','78701','US','Steel Bracket','Hardware','12 kg',2,'cancelled','2024-03-07','','account on hold'),
+ (15,'ORD-1015','Harborline Ltd','post@harborline.co.uk','7 Dock Road','Bristol','ENG','BS1 6QH','GB','Copper Fitting','Hardware','5 kg',3,'shipped','2024-03-08','','none'),
+ (16,'ORD-1016','Vista Components','orders@vista.com','55 Canyon Way','Phoenix','AZ','85004','US','Hex Nut','Hardware','0.5 kg',300,'delivered','2024-03-08','2024-03-10','none'),
+ (17,'ORD-1017','Asdf Asdf','foo@bar.com','999 Fake Street','Springfield','ZZ','11111','US','Sample Item','Hardware','1 kg',1,'delivered','2024-03-09','2024-03-09','lorem ipsum dolor'),
+ (18,'ORD-1018','Nordwind GmbH','kontakt@nordwind.de','Hafenstrasse 14','Hamburg','HH','20457','DE','Rubber Seal','Hardware','3 kg',9,'delivered','2024-03-09','2024-03-11','none'),
+ (19,'ORD-1019','Lakeside Traders','ops@lakeside.com','12 Shore Road','Chicago','IL','60601','US','Steel Bracket','Hardware','12 kg',4,'delivered','2024-03-10','9999-12-31','delivery date not recorded'),
+ (20,'ORD-1020','CafÃ© Lumière SARL','bonjour@cafelumiere.fr','8 Rue de la Paix','Paris','IDF','75002','FR','Copper Fitting','Hardware','5 kg',6,'delivered','2024-03-10','2024-03-12','livraison Ã  l''entrepÃ´t')
+);
+
+# A single-column primary key is picked up without being asked for. Rows 17 and
+# 11 of the sample are ids 5 and 12: a US country with a UK postcode.
+query II
+SELECT example_rows, example_keys FROM sem_profile('shipments', rows:=20)
+WHERE scope = 'row' AND column_name = 'postal_code';
+----
+[17, 11]	[5, 12]
+
+# Keys line up with row ids position for position, in every finding.
+query I
+SELECT count(*) FROM sem_report('shipments', rows:=20)
+WHERE len(example_keys) <> len(example_rows) OR len(review_keys) <> len(review_rows);
+----
+0
+
+# An explicit key overrides the primary key.
+query I
+SELECT example_keys FROM sem_profile('shipments', rows:=20, key:='order_ref')
+WHERE scope = 'row' AND column_name = 'postal_code';
+----
+[ORD-1005, ORD-1012]
+
+# The drill-down macros carry the key too.
+query II
+SELECT row_id, row_key FROM sem_findings('shipments', rows:=20)
+WHERE probe_id = 'operational_note_in_data_field';
+----
+12	14
+
+query I
+SELECT list(DISTINCT row_key ORDER BY row_key::INT) FROM sem_row_fields('shipments', rows:=20)
+WHERE probe_id = 'geo_inconsistent' AND flagged;
+----
+[5, 12]
+
+# Column-level findings have no rows, so no keys.
+query I
+SELECT count(*) FROM sem_profile('shipments', rows:=20)
+WHERE scope = 'column' AND example_keys IS NOT NULL;
+----
+0
+
+# A key that is not a column is an error, not a column of NULLs.
+statement error
+SELECT * FROM sem_profile('shipments', rows:=20, key:='nope');
+----
+key: no column `nope` in shipments
+
+# Without a primary key or an explicit key (a view, an unkeyed table),
+# resolution comes back NULL rather than guessing.
+statement ok
+CREATE TABLE composite (a INTEGER, b INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+CREATE TABLE unkeyed (a INTEGER);
+
+statement ok
+CREATE VIEW shipments_view AS SELECT * FROM shipments;
+
+query III
+SELECT sem_key_columns('unkeyed'), sem_key_columns('shipments_view'), sem_key_columns('unkeyed', 'a');
+----
+NULL	NULL	[a]
+
+# Composite keys retain typed components, and explicit names are resolved using
+# SQL's case-insensitive identifier rules.
+query III
+SELECT sem_key_columns('composite'), sem_key_columns('shipments', ['ID', 'order_ref']),
+       sem_record_key('{"a":12,"b":3}', sem_key_columns('composite'));
+----
+[a, b]	[id, order_ref]	{"a":12,"b":3}
+
+query I
+SELECT example_keys FROM sem_report('shipments', rows:=20, key:=['id', 'order_ref'])
+WHERE scope = 'row' AND column_name = 'postal_code';
+----
+['{"id":5,"order_ref":"ORD-1005"}', '{"id":12,"order_ref":"ORD-1012"}']
+
+# Invalid lists fail locally; nullable components don't produce a misleading key.
+statement error
+SELECT sem_key_columns('shipments', []);
+----
+key: expected a non-empty list
+
+statement error
+SELECT sem_key_columns('shipments', ['id', 'ID']);
+----
+key: duplicate column names
+
+statement error
+SELECT sem_key_columns('shipments', ['id', NULL]);
+----
+key: expected a column name
+
+statement error
+SELECT sem_key_columns('shipments', ['id', 'missing']);
+----
+key: no column `missing`
+
+query III
+SELECT sem_record_key('{"a":1,"b":null}', ['a','b']) IS NULL,
+       sem_record_key('{"a":1}', ['a','b']) IS NULL,
+       sem_record_key('{"a":"001"}', ['a']);
+----
+true	true	001
+
+# Materialize both surfaces to test their contract, not the model's exact scores.
+statement ok
+CREATE TEMP TABLE report_detail AS SELECT * FROM sem_report_rows('shipments', rows:=20);
+
+statement ok
+CREATE TEMP TABLE report_summary AS SELECT * FROM sem_report('shipments', rows:=20);
+
+# Every summary has exactly the flagged/review counts returned by drill-down.
+# FULL JOIN also detects detail groups that the summary lost.
+query I
+SELECT count(*) FROM report_summary s FULL JOIN (
+    SELECT finding_id, count(*) FILTER (disposition = 'flagged') AS flagged,
+           count(*) FILTER (disposition = 'review') AS review
+    FROM report_detail GROUP BY finding_id
+) d USING (finding_id)
+WHERE s.finding_id IS NULL OR d.finding_id IS NULL
+   OR s.rows_flagged <> d.flagged OR s.rows_to_review <> d.review;
+----
+0
+
+# Sample ids and keys stay paired, including review examples.
+query I
+SELECT count(*) FROM (
+    SELECT finding_id, unnest(example_rows) AS row_id, unnest(example_keys) AS row_key, 'flagged' AS disposition
+    FROM report_summary
+    UNION ALL
+    SELECT finding_id, unnest(review_rows), unnest(review_keys), 'review' FROM report_summary
+) e LEFT JOIN report_detail d USING (finding_id, row_id, disposition)
+WHERE d.row_id IS NULL OR e.row_key IS DISTINCT FROM d.row_key;
+----
+0
+
+# Multiple probes noticing the same conflict yield one record per finding.
+query II
+SELECT list(row_key ORDER BY row_key::INT), bool_and(list_contains(probe_ids, 'geo_inconsistent'))
+FROM report_detail WHERE scope = 'row' AND column_name = 'postal_code';
+----
+[5, 12]	true
+
+query I
+SELECT count(*) FROM (SELECT finding_id, row_id FROM report_detail GROUP BY ALL HAVING count(*) > 1);
+----
+0
+
+# Retracted test-data accusations don't leak into the report drill-down.
+query I
+SELECT count(*) FROM report_detail
+WHERE scope = 'row' AND row_key = '6' AND list_contains(probe_ids, 'row_is_test_data');
+----
+0
+
+# The sentinel's row accusation is already represented by its value finding.
+query I
+SELECT count(*) FROM report_detail WHERE scope = 'row' AND row_key = '19';
+----
+0
+
+# A report is not restricted to the five example keys. Raise the threshold to
+# exercise review-only groups and verify the same contract with a composite key.
+statement ok
+CREATE TEMP TABLE review_detail AS
+SELECT * FROM sem_report_rows('shipments', threshold:=0.99, rows:=20, key:=['id','order_ref']);
+
+query I
+SELECT count(*) > 0 FROM review_detail WHERE disposition = 'review';
+----
+true
+
+query I
+SELECT count(*) FROM sem_report('shipments', threshold:=0.99, rows:=20, key:=['id','order_ref']) s FULL JOIN (
+    SELECT finding_id, count(*) FILTER (disposition = 'flagged') AS flagged,
+           count(*) FILTER (disposition = 'review') AS review
+    FROM review_detail GROUP BY finding_id
+) d USING (finding_id)
+WHERE s.finding_id IS NULL OR d.finding_id IS NULL
+   OR s.rows_flagged <> d.flagged OR s.rows_to_review <> d.review;
+----
+0
+
+# Composite keys can join directly to original records without parsing row_json.
+query I
+SELECT count(*) FROM review_detail d LEFT JOIN shipments s
+  ON (d.row_key::JSON->>'id')::INT = s.id AND (d.row_key::JSON->>'order_ref') = s.order_ref
+WHERE s.id IS NULL;
+----
+0
+
+# Ids identify report groups, independent of threshold or chosen record key.
+query I
+SELECT count(*) FROM report_detail a JOIN review_detail b
+ON a.scope = b.scope AND a.column_name = b.column_name
+AND (a.scope = 'row' OR a.probe_ids = b.probe_ids)
+WHERE a.finding_id <> b.finding_id;
+----
+0
+
+query I
+SELECT count(*) = count(DISTINCT finding_id) FROM sem_profile('shipments', rows:=20);
+----
+true
+
+# An automatic primary key follows its declared order, not column order, so
+# that detecting the key and naming it give the same record keys.
+statement ok
+CREATE TABLE lines (line INTEGER, order_ref VARCHAR, note VARCHAR, PRIMARY KEY (order_ref, line));
+
+query II
+SELECT sem_key_columns('lines'),
+       sem_record_key('{"line":2,"order_ref":"ORD-1"}', sem_key_columns('lines'))
+     = sem_record_key('{"line":2,"order_ref":"ORD-1"}', sem_key_columns('lines', ['order_ref', 'line']));
+----
+[order_ref, line]	true
+
+# The declared order is looked up by the name as DuckDB resolves it. Tables of
+# the same name elsewhere, declared in another order, do not interfere.
+statement ok
+ATTACH ':memory:' AS other;
+
+statement ok
+CREATE SCHEMA other.s;
+
+statement ok
+CREATE TABLE other.main.lines (line INTEGER, order_ref VARCHAR, PRIMARY KEY (line, order_ref));
+
+statement ok
+CREATE TABLE other.s."odd.name" (line INTEGER, "Order Ref" VARCHAR, PRIMARY KEY ("Order Ref", line));
+
+statement ok
+CREATE TEMP TABLE shadow (e INTEGER, d INTEGER, PRIMARY KEY (e, d));
+
+statement ok
+CREATE TABLE main.shadow (e INTEGER, d INTEGER, PRIMARY KEY (d, e));
+
+query IIIIII
+SELECT sem_key_columns('lines'), sem_key_columns('main.lines'), sem_key_columns('memory.main.lines'),
+       sem_key_columns('other.lines'), sem_key_columns('other.main.lines'), sem_key_columns('OTHER.S."odd.name"');
+----
+[order_ref, line]	[order_ref, line]	[order_ref, line]	[line, order_ref]	[line, order_ref]	[Order Ref, line]
+
+# A bare name finds a temp table before the main schema, as DuckDB does.
+query II
+SELECT sem_key_columns('shadow'), sem_key_columns('main.shadow');
+----
+[e, d]	[d, e]
+
+query I
+SELECT json_extract(sem_stats(), '$.requests');
+----
+0
