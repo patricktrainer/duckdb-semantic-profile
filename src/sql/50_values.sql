@@ -75,7 +75,7 @@ CREATE OR REPLACE MACRO sem_values(
 CREATE OR REPLACE MACRO sem_row_fields(
     tbl, threshold := 0.7, rows := 100, n := 200,
     min_relevance := 0.5, max_per_column := 4, max_row_probes := 5, min_type_confidence := 0.6,
-    review_floor := 0.5, review_lift := 0.3
+    review_floor := 0.5, review_lift := 0.3, key := NULL
 ) AS TABLE
     WITH v AS (
         SELECT *, median(probability) OVER (PARTITION BY probe_id) AS probe_median
@@ -131,7 +131,9 @@ CREATE OR REPLACE MACRO sem_row_fields(
         FROM ranked
         GROUP BY row_id, probe_id
     )
-    SELECT a.row_id, a.probe_id,
+    SELECT a.row_id,
+           json_extract_string(a.row_json, sem_path(sem_key(tbl, key))) AS row_key,
+           a.probe_id,
            a.probability, a.flagged, a.to_review,
            t.fields[1] AS field_1,
            t.fields[2] AS field_2,

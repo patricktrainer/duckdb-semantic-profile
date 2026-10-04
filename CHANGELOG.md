@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- **Findings name rows by the table's own key.** `sem_profile` and `sem_report`
+  have two more columns, `example_keys` and `review_keys`, holding the key values
+  of the rows in `example_rows` and `review_rows`, in the same order. The key is
+  the table's single-column `PRIMARY KEY`, or the column passed as `key := '...'`.
+  With neither they are NULL. `sem_findings` and `sem_row_fields` take the same
+  `key` argument and return a `row_key` column after `row_id`. Queries that name
+  their columns are unaffected; reading columns by position, or `SELECT *` into a
+  table with the 0.2.0 shape, is not. The key never enters a request, so adding
+  one re-reads the cache rather than asking again.
+- Ties in `example_rows` / `review_rows` are now broken by row id, so the order is
+  deterministic and the key lists line up with it.
+
+### Changed
+
 - Built against DuckDB v1.5.6 (duckdb-rs 1.10506.0). The C API build is
   version-pinned, so this binary loads only into v1.5.6.
 

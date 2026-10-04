@@ -1,0 +1,117 @@
+# name: test/sql/07_keys.test
+# description: findings name rows by the table's own key, not their sample position
+# group: [semantic_profile]
+#
+# Replays the frozen demo responses offline, like 05_replay, but with `shipments`
+# declared with a PRIMARY KEY. The key never enters a request, so the cache still
+# hits; only the report layer changes.
+
+require semantic_profile
+
+statement ok
+SELECT sem_config('cache_path', 'test/fixtures/shipments_cache.jsonl');
+
+statement ok
+SELECT sem_config('offline', 'true');
+
+statement ok
+SELECT sem_reset_stats();
+
+statement ok
+CREATE TABLE shipments (id INTEGER PRIMARY KEY, order_ref VARCHAR, customer VARCHAR, email VARCHAR,
+    address VARCHAR, city VARCHAR, region VARCHAR, postal_code VARCHAR, country VARCHAR,
+    product_name VARCHAR, category VARCHAR, weight VARCHAR, qty INTEGER, status VARCHAR,
+    ordered_at VARCHAR, shipped_at VARCHAR, notes VARCHAR);
+
+statement ok
+INSERT INTO shipments SELECT * FROM (VALUES
+ (1,'ORD-1001','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Steel Bracket','Hardware','12 kg',2,'delivered','2024-03-01','2024-03-02','standard handling'),
+ (2,'ORD-1002','Nordwind GmbH','kontakt@nordwind.de','Hafenstrasse 14','Hamburg','HH','20457','DE','Copper Fitting','Hardware','26.4',1,'delivered','2024-03-01','2024-03-03','customer collected'),
+ (3,'ORD-1003','Test Company','test@test.com','123 Main St','Test City','CA','00000','US','Test Product','Test','1 kg',1,'delivered','2024-03-02','2024-03-02','asdf'),
+ (4,'ORD-1004','Harborline Ltd','post@harborline.co.uk','7 Dock Road','Bristol','ENG','BS1 6QH','GB','Steel Bracket','Hardware','9 kg',4,'delivered','2024-03-02','2024-03-04','none'),
+ (5,'ORD-1005','Pacific Freight','hello@pacfreight.com','88 Quay Street','Auckland','AUK','SW1A 1AA','US','Rubber Seal','Hardware','3 kg',10,'delivered','2024-03-03','2024-03-05','none'),
+ (6,'ORD-1006','Greenfield Co','sales@greenfield.com','22 Elm Avenue','Portland','OR','97205','US','Blue Cotton T-Shirt','Garden Tools','1 kg',6,'delivered','2024-03-03','2024-03-06','none'),
+ (7,'ORD-1007','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Steel Bracket','Hardware','12 kg',3,'shipped','2024-03-04','','awaiting carrier scan'),
+ (8,'ORD-1008','Delta Supplies','orders@delta.com; billing@delta.com','410 Pine Street','Seattle','WA','98101','US','Hex Nut','Hardware','0.5 kg',200,'delivered','2024-03-04','2024-03-06','none'),
+ (9,'ORD-1009','Rivera Logistics','contact@rivera.mx','Av. Reforma 500','Mexico City','CMX','06600','MX','Copper Fitting','Hardware','5 kg',8,'delivered','2024-03-05','2024-03-08','consignee SSN 078-05-1120 on file for customs'),
+ (10,'ORD-1010','Northgate Ltd','info@northgate.co.uk','15 Mill Lane','Leeds','ENG','LS1 4DY','GB','Rubber Seal','Hardware','2 kg',12,'delivered','2024-03-05','2024-03-07','none'),
+ (11,'ORD-1011','Summit Tools','buy@summittools.com','900 Ridge Road','Denver','CO','80202','US','Steel Bracket','Hardware','35.2',5,'delivered','2024-03-06','2024-03-08','none'),
+ (12,'ORD-1012','Bluewater Marine','sales@bluewater.com','3 Ocean Drive','Miami','FL','EC1A 1BB','US','Rubber Seal','Hardware','3 kg',7,'delivered','2024-03-06','2024-03-09','none'),
+ (13,'ORD-1013','Acme Industrial','ops@acme.com','1200 Harbor Blvd','Oakland','CA','94607','US','Hex Nut','Hardware','0.5 kg',150,'delivered','2024-03-07','2024-03-09','none'),
+ (14,'ORD-1014','Cedar Works','hello@cedarworks.com','DO NOT SHIP - see ticket 4412','Austin','TX','78701','US','Steel Bracket','Hardware','12 kg',2,'cancelled','2024-03-07','','account on hold'),
+ (15,'ORD-1015','Harborline Ltd','post@harborline.co.uk','7 Dock Road','Bristol','ENG','BS1 6QH','GB','Copper Fitting','Hardware','5 kg',3,'shipped','2024-03-08','','none'),
+ (16,'ORD-1016','Vista Components','orders@vista.com','55 Canyon Way','Phoenix','AZ','85004','US','Hex Nut','Hardware','0.5 kg',300,'delivered','2024-03-08','2024-03-10','none'),
+ (17,'ORD-1017','Asdf Asdf','foo@bar.com','999 Fake Street','Springfield','ZZ','11111','US','Sample Item','Hardware','1 kg',1,'delivered','2024-03-09','2024-03-09','lorem ipsum dolor'),
+ (18,'ORD-1018','Nordwind GmbH','kontakt@nordwind.de','Hafenstrasse 14','Hamburg','HH','20457','DE','Rubber Seal','Hardware','3 kg',9,'delivered','2024-03-09','2024-03-11','none'),
+ (19,'ORD-1019','Lakeside Traders','ops@lakeside.com','12 Shore Road','Chicago','IL','60601','US','Steel Bracket','Hardware','12 kg',4,'delivered','2024-03-10','9999-12-31','delivery date not recorded'),
+ (20,'ORD-1020','CafÃ© Lumière SARL','bonjour@cafelumiere.fr','8 Rue de la Paix','Paris','IDF','75002','FR','Copper Fitting','Hardware','5 kg',6,'delivered','2024-03-10','2024-03-12','livraison Ã  l''entrepÃ´t')
+);
+
+# A single-column primary key is picked up without being asked for. Rows 17 and
+# 11 of the sample are ids 5 and 12: a US country with a UK postcode.
+query II
+SELECT example_rows, example_keys FROM sem_profile('shipments', rows:=20)
+WHERE scope = 'row' AND column_name = 'postal_code';
+----
+[17, 11]	[5, 12]
+
+# Keys line up with row ids position for position, in every finding.
+query I
+SELECT count(*) FROM sem_report('shipments', rows:=20)
+WHERE len(example_keys) <> len(example_rows) OR len(review_keys) <> len(review_rows);
+----
+0
+
+# An explicit key overrides the primary key.
+query I
+SELECT example_keys FROM sem_profile('shipments', rows:=20, key:='order_ref')
+WHERE scope = 'row' AND column_name = 'postal_code';
+----
+[ORD-1005, ORD-1012]
+
+# The drill-down macros carry the key too.
+query II
+SELECT row_id, row_key FROM sem_findings('shipments', rows:=20)
+WHERE probe_id = 'operational_note_in_data_field';
+----
+12	14
+
+query I
+SELECT list(DISTINCT row_key ORDER BY row_key::INT) FROM sem_row_fields('shipments', rows:=20)
+WHERE probe_id = 'geo_inconsistent' AND flagged;
+----
+[5, 12]
+
+# Column-level findings have no rows, so no keys.
+query I
+SELECT count(*) FROM sem_profile('shipments', rows:=20)
+WHERE scope = 'column' AND example_keys IS NOT NULL;
+----
+0
+
+# A key that is not a column is an error, not a column of NULLs.
+statement error
+SELECT * FROM sem_profile('shipments', rows:=20, key:='nope');
+----
+key: no column `nope` in shipments
+
+# Without a usable key, resolution comes back NULL rather than guessing.
+statement ok
+CREATE TABLE composite (a INTEGER, b INTEGER, PRIMARY KEY (a, b));
+
+statement ok
+CREATE TABLE unkeyed (a INTEGER);
+
+statement ok
+CREATE VIEW shipments_view AS SELECT * FROM shipments;
+
+query IIII
+SELECT sem_key('composite', NULL), sem_key('unkeyed', NULL), sem_key('shipments_view', NULL),
+       sem_key('unkeyed', 'a');
+----
+NULL	NULL	NULL	a
+
+query I
+SELECT json_extract(sem_stats(), '$.requests');
+----
+0
