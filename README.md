@@ -177,6 +177,7 @@ anyway, or run the script `sem_sql()` returns on your own connection.
 | `sem_findings(tbl, …, key := NULL)` | raw threshold crossings, before report retractions/grouping |
 | `sem_report_rows(tbl, …, key := NULL)` | every flagged/review record retained by the report, with keys and finding IDs |
 | `sem_cost(tbl, …)` | dry run: request and token estimate, attribution ceiling |
+| `sem_key_columns(tbl, key := NULL)` | the key findings will be reported by; makes no API calls |
 | `sem_catalog()` | the probe catalog |
 
 **Primitives** — TypeSafe judgments as plain SQL, useful on their own.
@@ -218,14 +219,15 @@ A row-level finding has no single offending value, so it names the field instead
 conflicts with (`postal_code=SW1A 1AA; country=US`), and `probe_id` lists every
 check that noticed. Rows it is less sure of — scored from 0.5 up to `threshold`,
 but at least 0.3 above what that check typically scored — are listed separately
-as `rows_to_review` / `review_rows`. On NYC 311 data that is how a real defect
-surfaced: 11 requests left `Pending` with closed dates, scored ~0.6 against a
-typical 0.1, and never reached 0.7.
+as `rows_to_review` / `review_rows`. On NYC 311 data (`demo/nyc311.sql`) that
+is how a real defect surfaced: 11 requests left `Pending` with closed dates,
+scored ~0.6 against a typical 0.1, and never reached 0.7.
 
 `example_rows` and `review_rows` are positions in the sample, not your table's
 keys. `example_keys` and `review_keys` give the same rows, in the same order, by
 the table's own key: its `PRIMARY KEY` (including composite keys) if it declares
-one, or the column name or list of column names you pass as `key`. The demo table declares none, so:
+one, or the column name or list of column names you pass as `key`. The demo table
+declares none, so:
 
 ```sql
 SELECT column_name, example_rows, example_keys
@@ -259,6 +261,19 @@ order; name it explicitly to be sure.)
 If any component is NULL, the entire `row_key` is NULL. Explicit keys are not
 checked for uniqueness: choose non-null columns that identify a record. Findings
 are never merged just because their key values match.
+
+**NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
+"is this a placeholder?" about one invites a yes — exactly backwards, since
+`sentinel_used_as_value` exists to find values that *stand in* for absence. Value
+probes are pruned per row where the column is NULL, which also costs nothing in
+cache reuse (state differs per row regardless) and saves the tokens. A value that
+does stand in for absence — `n/a`, `-1`, `''` — is still caught.
+
+**Probes whose premise is the semantic type are gated on confidence.** If discovery
+is only 0.51 sure that `product_name` holds product *codes*, then asking "is
+`Steel Bracket` a product code?" produces a confident wrong answer on every row.
+Those probes are skipped below `min_type_confidence` (default 0.6) rather than
+allowed to launder a shaky classification into 20 findings.
 
 ### Drill into a report
 
@@ -299,19 +314,6 @@ and its `retracted` flag. Both accept the same `key` argument. Selecting a key
 changes only the output; it does not change model requests or invalidate cached
 judgments. Keep the source data unchanged between profiling and drill-down, or
 materialize the detail results to retain a snapshot.
-
-**NULL is never probed.** A SQL NULL is absence expressed correctly, so asking
-"is this a placeholder?" about one invites a yes — exactly backwards, since
-`sentinel_used_as_value` exists to find values that *stand in* for absence. Value
-probes are pruned per row where the column is NULL, which also costs nothing in
-cache reuse (state differs per row regardless) and saves the tokens. A value that
-does stand in for absence — `n/a`, `-1`, `''` — is still caught.
-
-**Probes whose premise is the semantic type are gated on confidence.** If discovery
-is only 0.51 sure that `product_name` holds product *codes*, then asking "is
-`Steel Bracket` a product code?" produces a confident wrong answer on every row.
-Those probes are skipped below `min_type_confidence` (default 0.6) rather than
-allowed to launder a shaky classification into 20 findings.
 
 ## Settings
 
