@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Open a DuckDB shell with the semantic_profile loaded and the demo table ready.
 #
-# The extension is pinned to DuckDB v1.5.6 by the unstable C API, so this uses the
-# system duckdb when it is that version, and otherwise falls back to a CLI in
-# build/cli (see README).
+# The extension uses the stable C API and is tested on DuckDB v1.5.6 and v2.0.0, so
+# this uses the system duckdb when it is one of those, and otherwise falls back to
+# a CLI in build/cli (see README).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 [ -f .env ] && { set -a; . ./.env; set +a; }
 
-NEED=v1.5.6
-if command -v duckdb >/dev/null && duckdb --version | grep -q "$NEED"; then
+NEED="v1.5.6 or v2.x"
+if command -v duckdb >/dev/null && duckdb --version | grep -Eq "^v(1\.5\.6|2\.)"; then
     CLI=duckdb
 elif [ -x build/cli/duckdb ]; then
     CLI=build/cli/duckdb

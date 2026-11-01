@@ -86,8 +86,7 @@ SELECT * FROM sem_cost('shipments');   -- dry run, makes no API calls
 
 The extension is in DuckDB's
 [community extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/semantic_profile)
-repository, so no build is needed. It needs DuckDB **v1.5.6** (the C API build is
-version-pinned).
+repository, so no build is needed. It works with DuckDB **v2.0.0** and **v1.5.6**.
 
 ```bash
 export TYPESAFE_API_KEY=...   # or: SELECT sem_config('api_key_file', '~/.typesafe-key');
@@ -105,13 +104,13 @@ end up in query logs and shell history.
 
 ### Building from source
 
-Needs Rust, Python 3 and DuckDB **v1.5.6**.
+Needs Rust, Python 3 and DuckDB **v2.0.0** (or v1.5.6).
 
 ```bash
 git clone --recursive git@github.com:patricktrainer/duckdb-semantic-profile.git
 # already cloned without --recursive:  git submodule update --init
 
-brew upgrade duckdb        # if you are on an older 1.5.x
+brew upgrade duckdb        # if you are older than 1.5.6
 make configure && make debug
 export TYPESAFE_API_KEY=...   # or put it in .env, which is gitignored
 duckdb -unsigned
@@ -391,8 +390,11 @@ findings rather than one: row 7 blamed `notes` ("awaiting carrier scan" beside
 
 ## Notes and limits
 
-- The extension is built against the **unstable** DuckDB C API, so a binary loads
-  only into the DuckDB version it was built for (currently v1.5.6).
+- The extension is built against the **stable** DuckDB C API. It is tested on
+  v1.5.6 and v2.0.0.
+- On DuckDB 2.0 a column that is NULL in every row of a `VALUES` list has type
+  `"NULL"` rather than `INTEGER`. The type is part of each request, so a cache
+  recorded under 1.5 misses for such columns.
 - Loading the extension never writes to your database. See **Where the macros go**.
 - Sampling uses `ORDER BY hash(row) LIMIT n`, which reads the whole table. For very
   large tables, profile a pre-sampled view.

@@ -30,10 +30,10 @@ jobs:
 
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
     with:
-      duckdb_version: v1.5.6
-      ci_tools_version: v1.5-variegata
+      duckdb_version: v2.0.0
+      ci_tools_version: v2.0-cyanoptera
       extension_name: semantic_profile
       extra_toolchains: rust;python3
       # wasm: this extension has no wasm target -- the template's staticlib

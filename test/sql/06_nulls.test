@@ -19,7 +19,7 @@ SELECT sem_config('offline', 'true');
 
 statement ok
 CREATE TABLE sparse AS SELECT * FROM (VALUES
- (1, 'ada@example.com',   NULL, 'active', 12),
+ (1, 'ada@example.com',   NULL::INTEGER, 'active', 12),
  (2, NULL,                NULL, NULL,     NULL),
  (3, 'n/a',               NULL, NULL,     NULL),
  (4, NULL,                NULL, 'active', NULL),

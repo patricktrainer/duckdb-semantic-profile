@@ -4,12 +4,14 @@ PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 EXTENSION_NAME=semantic_profile
 
-# Set to 1 to enable Unstable API (binaries will only work on TARGET_DUCKDB_VERSION, forwards compatibility will be broken)
-# Note: currently extension-template-rs requires this, as duckdb-rs relies on unstable C API functionality
-USE_UNSTABLE_C_API=1
+# Build against the stable V1 C API. DuckDB 2.x refuses unstable-API binaries that
+# lack the _init_c_api_v2 entrypoint, which the `duckdb` crate cannot emit (only
+# `duckdb-neo` can). The stable ABI loads into 1.5.6 and 2.0.0 alike (both tested).
+USE_UNSTABLE_C_API=0
 
-# Target DuckDB version
-TARGET_DUCKDB_VERSION=v1.5.6
+# With the stable ABI this is the C API version requested, not a DuckDB release.
+# It is read at macro expansion: after changing it, touch src/lib.rs.
+TARGET_DUCKDB_VERSION=v1.2.0
 
 all: configure debug
 
