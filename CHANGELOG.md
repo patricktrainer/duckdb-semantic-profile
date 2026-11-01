@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-01
+
+Findings now point at the table's own rows, and the extension runs on DuckDB 2.0.
 
 ### Added
 

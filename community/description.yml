@@ -1,7 +1,7 @@
 extension:
   name: semantic_profile
   description: Profiles what the values in a table mean rather than what shape they are — semantic type per column, PII and format drift, and cross-column contradictions
-  version: 0.2.0
+  version: 0.3.0
   language: Rust
   build: cargo
   license: MIT
@@ -99,7 +99,7 @@ docs:
     ### Functions
 
     `sem_profile`, `sem_columns`, `sem_probes`, `sem_values`, `sem_report`,
-    `sem_row_fields`, `sem_findings`, `sem_cost`, `sem_catalog`; the primitives `ts_ask`, `ts_noul`,
+    `sem_report_rows`, `sem_row_fields`, `sem_findings`, `sem_cost`, `sem_catalog`; the primitives `ts_ask`, `ts_noul`,
     `ts_choice`, `ts_score`; and `sem_config`, `sem_settings`, `sem_stats`,
     `sem_status`, `sem_sql`.
 
