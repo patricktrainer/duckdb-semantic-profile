@@ -32,8 +32,9 @@
 
 ### Changed
 
-- Built against DuckDB v1.5.6 (duckdb-rs 1.10506.0). The C API build is
-  version-pinned, so this binary loads only into v1.5.6.
+- **Supports DuckDB v2.0.0.** Built with duckdb-rs 1.20000.1 against the
+  *stable* C API, so one binary loads into both v1.5.6 and v2.0.0 (the
+  version-pinned unstable build would not load into 2.x).
 
 ## 0.2.0 — 2026-09-27
 
